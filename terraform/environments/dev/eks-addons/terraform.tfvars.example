@@ -1,0 +1,4 @@
+allowed_account_ids = ["111122223333"]
+aws_region          = "us-east-1"
+vpc_id              = "vpc-0123456789abcdef0"
+eks_cluster_name    = "ai-inference-lab"

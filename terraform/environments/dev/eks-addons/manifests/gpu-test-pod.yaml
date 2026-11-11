@@ -1,0 +1,23 @@
+# NOT applied by Terraform. Apply by hand to watch Karpenter create one g5.xlarge:
+#   kubectl apply -f manifests/gpu-test-pod.yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: gpu-test
+  namespace: default
+spec:
+  restartPolicy: Never
+  nodeSelector:
+    workload: gpu
+  tolerations:
+    - key: nvidia.com/gpu
+      operator: Equal
+      value: "true"
+      effect: NoSchedule
+  containers:
+    - name: cuda
+      image: nvidia/cuda:12.4.1-base-ubuntu22.04
+      command: ["nvidia-smi"]
+      resources:
+        limits:
+          nvidia.com/gpu: 1

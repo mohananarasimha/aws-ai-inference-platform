@@ -1,0 +1,41 @@
+apiVersion: karpenter.sh/v1
+kind: NodePool
+metadata:
+  name: gpu
+spec:
+  template:
+    metadata:
+      labels:
+        workload: gpu
+    spec:
+      nodeClassRef:
+        group: karpenter.k8s.aws
+        kind: EC2NodeClass
+        name: gpu
+      taints:
+        - key: nvidia.com/gpu
+          value: "true"
+          effect: NoSchedule
+      requirements:
+        - key: node.kubernetes.io/instance-type
+          operator: In
+          values:
+            - {{ .Values.instanceType | quote }}
+        - key: karpenter.sh/capacity-type
+          operator: In
+          values: ["on-demand"]
+        - key: kubernetes.io/arch
+          operator: In
+          values: ["amd64"]
+        - key: kubernetes.io/os
+          operator: In
+          values: ["linux"]
+      expireAfter: 24h
+  limits:
+    cpu: {{ .Values.maxCpu | quote }}
+    nvidia.com/gpu: {{ .Values.maxGpus | quote }}
+  disruption:
+    consolidationPolicy: WhenEmpty
+    consolidateAfter: 30s
+    budgets:
+      - nodes: "1"

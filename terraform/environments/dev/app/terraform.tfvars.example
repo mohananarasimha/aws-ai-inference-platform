@@ -1,0 +1,11 @@
+allowed_account_ids = ["111122223333"]
+aws_region         = "us-east-1"
+bedrock_model_id_1 = "amazon.nova-micro-v1:0"
+bedrock_model_id_2 = "amazon.nova-lite-v1:0"
+lambda_runtime     = "python3.12"
+lambda_timeout     = 30
+lambda_memory_size = 256
+log_retention_days = 14
+vpc_id             = "vpc-0123456789abcdef0"
+lambda_subnet_ids  = ["subnet-0123456789abcdef0"]
+wireguard_eni_id   = "eni-0123456789abcdef0"

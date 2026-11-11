@@ -1,0 +1,31 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: vllm
+  namespace: default
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-scheme: internal
+    service.beta.kubernetes.io/aws-load-balancer-nlb-target-type: ip
+    service.beta.kubernetes.io/aws-load-balancer-subnets: subnet-0aaaaaaaaaaaaaaa1,subnet-0aaaaaaaaaaaaaaa2,subnet-0aaaaaaaaaaaaaaa3,subnet-0aaaaaaaaaaaaaaa4,subnet-0aaaaaaaaaaaaaaa5
+    service.beta.kubernetes.io/aws-load-balancer-security-groups: enterprise-ai-platform-dev-inference-nlb
+    service.beta.kubernetes.io/aws-load-balancer-manage-backend-security-group-rules: "true"
+    service.beta.kubernetes.io/aws-load-balancer-attributes: load_balancing.cross_zone.enabled=true
+    service.beta.kubernetes.io/aws-load-balancer-healthcheck-protocol: http
+    service.beta.kubernetes.io/aws-load-balancer-healthcheck-path: /health
+    service.beta.kubernetes.io/aws-load-balancer-healthcheck-port: traffic-port
+    service.beta.kubernetes.io/aws-load-balancer-healthcheck-interval: "10"
+    service.beta.kubernetes.io/aws-load-balancer-healthcheck-healthy-threshold: "2"
+    service.beta.kubernetes.io/aws-load-balancer-healthcheck-unhealthy-threshold: "2"
+
+spec:
+  type: LoadBalancer
+  loadBalancerClass: service.k8s.aws/nlb
+
+  selector:
+    app: vllm
+
+  ports:
+    - name: http
+      port: 8000
+      targetPort: 8000
+      protocol: TCP

@@ -1,0 +1,41 @@
+# Terraform: never commit state or saved plans (they contain secrets).
+# .terraform.lock.hcl IS committed.
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+tf.plan
+terraform.tfvars
+*.auto.tfvars
+crash.log
+.build/
+
+# Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Local environment and credentials
+.env
+.env.*
+!.env.example
+.envrc
+
+# Generated
+cdk.out/
+node_modules/
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+
+# Keys and caches
+*.pem
+*.key
+.cache/
+
+# Leftover empty file from the old flat Terraform root
+asd.json
