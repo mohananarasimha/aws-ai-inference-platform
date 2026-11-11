@@ -55,6 +55,8 @@ The report also has an informational breakdown (EC2 launch, node registration, G
 
 ## First observed run (2026-11-11, no inference request)
 
+Original script output, with the invalid figures marked: [`experiments/results/cold-start-2026-11-11.txt`](experiments/results/cold-start-2026-11-11.txt).
+
 Observed on a cold start that was already in progress; one `g5.xlarge`, us-east-1d, vLLM `v0.33.0`, model `Qwen/Qwen2.5-7B-Instruct`.
 
 | | Time | Share of 701 s |

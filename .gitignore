@@ -39,3 +39,7 @@ node_modules/
 
 # Leftover empty file from the old flat Terraform root
 asd.json
+
+# Raw experiment captures; sanitized copies live in docs/experiments/results/
+exp1-pod.txt
+exp3-node.txt

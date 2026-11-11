@@ -1,0 +1,90 @@
+# Cold start of the vLLM pod on a fresh Karpenter GPU node, 2026-11-11
+#
+# SOURCE: original output of `scripts/measure_vllm_cold_start.py --test-inference`,
+#         copied verbatim from the terminal (pod `vllm-56f4967794-rps5x`, run about
+#         19 minutes after the pod became Ready). Only the INVALID markers and the
+#         notes below were added, and the node hostname is replaced with <gpu-node>.
+#
+# VALID (Kubernetes-recorded timestamps, +/- 1 s):
+#   Karpenter reaction 2 s | node provisioning 39 s | GPU capacity ready 41 s
+#   container scheduling 313 s (image pull 299 s) | model initialization 347 s
+#   pod Ready = T4 - T0 = 701 s (11 min 41 s)
+#
+# INVALID - do not use as cold-start durations. The script was started AFTER the pod
+# was Ready, so T4b (/health) and T5 are not first-success times:
+#   "First request 1169s", "Total usable cold start 1870s",
+#   "NLB target healthy 1158s after T4"
+# (The script was fixed afterwards: it now prints n/a for these when the pod is
+#  already Ready.)
+#
+# NOT in the raw output (reported separately, see docs/vllm-cold-start.md):
+#   image size about 9.7 GB; Hugging Face cache is an emptyDir.
+# ------------------------------------------------------------------------------
+scripts/measure_vllm_cold_start.py --test-inference
+vLLM Cold Start Measurement
+
+Pod        vllm-56f4967794-rps5x
+Image      docker.io/vllm/vllm-openai:v0.33.0
+NodeClaim  gpu-7cf6r (g5.xlarge, us-east-1d)
+Node       <gpu-node> (g5.xlarge)
+
+T0 Pod Pending
+2026-11-11T04:55:31Z
+
+T1 NodeClaim Created
+2026-11-11T04:55:33Z
+
+T2 Node Ready
+2026-11-11T04:56:12Z
+
+T3 Container Started
+2026-11-11T05:01:25Z
+
+T4 vLLM Ready
+2026-11-11T05:07:12Z
+
+T5 First Inference
+2026-11-11T05:26:41.061Z
+
+Durations
+
+Karpenter reaction         2s
+Node provisioning          39s
+Container scheduling       313s
+Model initialization       347s
+First request              1169s   <-- INVALID (script started after Ready)
+
+GPU capacity ready         41s
+Model cold start           347s
+Total usable cold start    1870s   <-- INVALID (see header)
+
+Breakdown (informational)
+
+EC2 instance launched                     3s   after T1
+node registered with the cluster         25s   after launch
+node Ready                               11s   after registration
+nvidia.com/gpu available (T2b)            9s   after T2
+pod bound to the GPU node                 9s   after T2
+image pull started                        0s   after bind
+image pull                              299s   pull duration
+container started                         5s   after pull
+inference request latency                11s   one request
+NLB target healthy                     1158s   after T4 (inside First request)   <-- INVALID
+device plugin pod Ready                   4s   after T2
+
+vLLM reported while starting (best effort, version dependent)
+
+    82s   Initializing model took 3.444775 seconds
+   293s   Loading weights took 105.06 seconds
+   294s   Model loading took 14.29 GiB memory and 216.169566 seconds
+   312s   [backbone] Compiling a graph for compile range (1, 2048) takes 7.62 s
+   316s   [backbone] torch.compile took 17.64 s in total
+   316s   [backbone] Initial profiling/warmup run took 0.03 s
+   328s   Graph capturing finished in 7 secs, took 0.34 GiB
+   328s   JIT kernel warmup finished in 0.00s.
+
+Notes
+
+- The pod was already Ready when the script started: T4b (/health) and T5 are not first-success times; the Kubernetes-recorded milestones are still exact.
+
+Kubernetes timestamps have 1 s resolution: each duration is +/- 1 s.

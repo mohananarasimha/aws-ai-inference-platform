@@ -1,0 +1,65 @@
+# vLLM pod failure on a surviving GPU node, 2026-11-11
+#
+# SOURCE: output of `scripts/measure_vllm_recovery.py pod --inject`, saved with tee
+#         as exp1-pod.txt. Sanitized only: the EC2 instance ID, node hostname and pod IP
+#         are replaced with placeholders, and the interactive confirmation prompt and the
+#         duplicated target block are removed. All timestamps and numbers are unchanged.
+#
+# Failure injected: kubectl delete pod <vllm pod> --wait=false (Deployment, replica count
+# and node untouched). The node survived, so there was no EC2 provisioning.
+#
+# P0 -> P5 is computed from the script clock at the delete command to the first successful
+# controlled request: 06:17:08.635Z -> 06:23:17.549Z = 368.9 s (reported as 369 s).
+#
+# CAUTION on "What the caller saw": the three failed requests took 31 s each and are
+# labelled "HTTP 503 endpoint not found". The label is the script's own mapping of
+# status 503 (measure_vllm_recovery.py). 31 s matches the Lambda 30 s hard timeout, and
+# API Gateway HTTP APIs also return 503 for a Lambda timeout, so these may be Lambda
+# timeouts rather than the gateway's own "endpoint not found" error. This was NOT
+# verified (no Lambda logs were preserved for this window). See docs/known-limitations.md.
+# ------------------------------------------------------------------------------
+Target (before the failure)
+  pod         vllm-687b7b9c45-72vrx (Running)
+  node        <gpu-node> (g5.xlarge)
+  NodeClaim   gpu-7cf6r (us-east-1d)
+  instance    i-xxxxxxxx (running)
+
+About to run:
+  kubectl delete pod vllm-687b7b9c45-72vrx -n default --wait=false
+
+Target (before the failure)
+  pod         vllm-687b7b9c45-72vrx
+  node        <gpu-node> (g5.xlarge)
+  NodeClaim   gpu-7cf6r
+
+Timeline
+  P0   pod deletion requested (failure injected)      2026-11-11T06:17:08.635Z   [script clock at the delete command]
+  P1   replacement pod created                        2026-11-11T06:17:10Z   [k8s]
+  P2   replacement pod bound to a node                2026-11-11T06:17:11Z   [k8s]
+  P3   vLLM container started                         2026-11-11T06:17:12Z   [k8s]
+  P4a  pod Ready                                      2026-11-11T06:22:24Z   [k8s]
+  P4b  vLLM serving (its own log line)                2026-11-11T06:22:19.365Z   [vLLM log (Application startup complete)]
+  P4c  NLB target healthy                             2026-11-11T06:22:53.725Z   [observed (poll)]
+  P5   first successful inference                     2026-11-11T06:23:17.549Z   [first successful request after the infrastructure was ready]
+
+Durations
+  replacement pod created                          1.4s
+  scheduling delay                                 1s
+  container start                                  1s
+  container start to Ready (model startup)         312s
+  NLB recovery after Ready                         30s
+  pod Ready MTTR                                   315s
+  TOTAL pod-failure MTTR                           369s
+
+Recovery evidence
+  image                 already cached on the node
+  replacement on node   the same node
+  model weights         downloaded again (vLLM reported the download time, about 106s)
+
+What the caller saw (controlled requests)
+     +26s  HTTP 503 endpoint not found                      31s
+    +158s  HTTP 503 endpoint not found                      31s
+    +280s  HTTP 503 endpoint not found                      31s
+    +358s  success                                          11s
+
+Kubernetes timestamps have 1 s resolution; 'observed (poll)' moments are as precise as the poll interval.

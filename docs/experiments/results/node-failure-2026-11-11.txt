@@ -1,0 +1,78 @@
+# vLLM node failure (GPU instance terminated), 2026-11-11
+#
+# EVIDENCE QUALITY - read this first:
+#   The measurement script (measure_vllm_recovery.py node --inject) aborted right after the
+#   instance was terminated: `kubectl get nodes` failed with
+#   "Unable to connect to the server: net/http: TLS handshake timeout".
+#   That was a measurement-tool failure, not a platform failure; the platform kept recovering.
+#   The script's saved output therefore holds only the pre-injection prompt, and the exact
+#   failure-injection time (N0) and the NLB-healthy time (N8) were NOT captured.
+#
+#   Section A: ORIGINAL raw CloudWatch Lambda log lines (retrieved read-only afterwards).
+#   Sections B-D: values REPORTED by the operator from the Kubernetes objects and events
+#                 during the run (the raw kubectl/event output was not retained).
+#   Durations are computed from those timestamps.
+#
+# Identifiers are replaced where not needed to understand the result.
+
+## B. Timeline (UTC, 2026-11-11)  [operator-reported Kubernetes timestamps]
+  replacement pod created                 06:25:12
+  replacement NodeClaim created           06:33:25   (the one that finally launched)
+  new GPU node Ready                      06:34:02
+  vLLM container started                  06:39:46
+  vLLM pod Ready                          06:45:14
+  first confirmed successful inference    06:46:18   (Lambda log: provider vllm, status success,
+                                                      E2E 8443 ms, model 2428 ms, 537 in / 24 out tokens)
+  last success before the failure         06:23:16   (E2E 7042 ms, model 1480 ms)   [operator-reported]
+  NLB target healthy (N8)                 NOT CAPTURED
+  failure injected (N0)                   NOT CAPTURED
+
+## C. Durations (computed from section B)
+  replacement pod created -> successful NodeClaim      8 min 13 s
+  NodeClaim -> node Ready                                  37 s
+  node Ready -> container started                      5 min 44 s
+  container started -> pod Ready                       5 min 28 s
+  pod created -> pod Ready                            20 min 02 s
+  pod Ready -> successful end-to-end inference         1 min 04 s
+  replacement pod created -> successful inference     21 min 06 s
+  NOT an exact failure MTTR: the true start (N0) was lost, so the real outage was longer.
+
+## D. Facts reported from Kubernetes/Karpenter during the run
+  old    NodeClaim gpu-7cf6r,  node <gpu-node>, instance i-xxxxxxxx (g5.xlarge, us-east-1d)
+  new    NodeClaim gpu-dc9j4,  node <gpu-node-2>, g5.xlarge, us-east-1b (different AZ)
+  replacement pod vllm-687b7b9c45-lfvl5
+  image vllm/vllm-openai:v0.33.0 pulled on the fresh node: 5 min 9.438 s (Kubernetes pull event)
+
+  Quota: Running On-Demand G and VT instances = 4 vCPU; one g5.xlarge = 4 vCPU.
+  Karpenter NodeClaims that failed to launch before gpu-dc9j4 succeeded
+  (event text as reported; the raw events were not retained):
+    gpu-8lq29   VcpuLimitExceeded
+    gpu-jt8fq   VcpuLimitExceeded
+    "You have requested more vCPU capacity than your current vCPU limit of 4 allows"
+
+## A. Lambda log lines during the outage (original, from CloudWatch)
+06:25:38.736Z  START RequestId: <id> Version: $LATEST
+06:25:38.855Z  {"event": "mcp_tools_discovered", "cached": true, "tools": ["get_lambda_configuration", "get_recent_lambda_logs", "get_lambda_errors"]}
+06:26:08.766Z  END RequestId: <id>
+06:26:08.766Z  REPORT RequestId: <id>	Duration: 30000.00 ms	Billed Duration: 30000 ms	Memory Size: 256 MB	Max Memory Used: 147 MB	Status: timeout
+06:27:52.568Z  START RequestId: <id> Version: $LATEST
+06:27:58.548Z  {"event": "mcp_tools_discovered", "tools": ["get_lambda_configuration", "get_recent_lambda_logs", "get_lambda_errors"]}
+06:28:20.749Z  END RequestId: <id>
+06:28:20.749Z  REPORT RequestId: <id>	Duration: 30000.00 ms	Billed Duration: 30000 ms	Memory Size: 256 MB	Max Memory Used: 147 MB	Status: timeout
+06:29:55.449Z  START RequestId: <id> Version: $LATEST
+06:30:02.092Z  {"event": "mcp_tools_discovered", "tools": ["get_lambda_configuration", "get_recent_lambda_logs", "get_lambda_errors"]}
+06:30:23.628Z  END RequestId: <id>
+06:30:23.628Z  REPORT RequestId: <id>	Duration: 30000.00 ms	Billed Duration: 30000 ms	Memory Size: 256 MB	Max Memory Used: 146 MB	Status: timeout
+06:32:10.555Z  START RequestId: <id> Version: $LATEST
+06:32:16.535Z  {"event": "mcp_tools_discovered", "tools": ["get_lambda_configuration", "get_recent_lambda_logs", "get_lambda_errors"]}
+06:32:38.671Z  END RequestId: <id>
+06:32:38.671Z  REPORT RequestId: <id>	Duration: 30000.00 ms	Billed Duration: 30000 ms	Memory Size: 256 MB	Max Memory Used: 147 MB	Status: timeout
+06:34:10.514Z  START RequestId: <id> Version: $LATEST
+06:34:15.972Z  {"event": "mcp_tools_discovered", "tools": ["get_lambda_configuration", "get_recent_lambda_logs", "get_lambda_errors"]}
+06:34:38.712Z  END RequestId: <id>
+06:34:38.712Z  REPORT RequestId: <id>	Duration: 30000.00 ms	Billed Duration: 30000 ms	Memory Size: 256 MB	Max Memory Used: 147 MB	Status: timeout
+#
+# Five invocations ended with "Duration: 30000.00 ms ... Status: timeout". None emitted a
+# request log or metric. Each shows START, one mcp_tools_discovered line, then nothing until
+# the 30 s kill. The application request budget is 24 s. Cause not found; see
+# docs/known-limitations.md and docs/experiments/vllm-failure-recovery.md.

@@ -1,12 +1,20 @@
 # vLLM failure and recovery experiments
 
-Status (2026-11-11): **one of three experiments was run (GPU node failure). The other two were not, by decision.** Everything marked "measured" below comes from that run; everything marked "hypothesis" was never tested. Nothing was rerun when this page was written.
+Status (2026-11-11): **two of three experiments were run: pod failure and GPU node failure. The readiness-failure test was not run, by decision.** Everything marked "measured" comes from the result files in [`results/`](results/); everything marked "hypothesis" was never tested.
+
+Evidence files (each one says how original it is):
+
+| File | What it is |
+|---|---|
+| [`results/cold-start-2026-11-11.txt`](results/cold-start-2026-11-11.txt) | original script output, with the invalid figures marked |
+| [`results/pod-failure-2026-11-11.txt`](results/pod-failure-2026-11-11.txt) | the script's own saved output, sanitized |
+| [`results/node-failure-2026-11-11.txt`](results/node-failure-2026-11-11.txt) | original Lambda log lines; the Kubernetes timeline and the quota events are operator-reported, because the measuring script aborted |
 
 | Item | Status |
 |---|---|
 | Cold-start behavior | COMPLETE, see [`../vllm-cold-start.md`](../vllm-cold-start.md) |
 | GPU node failure and recovery (Experiment 3) | COMPLETE, with caveats (see "Measurement gaps") |
-| Pod-only failure (Experiment 1) | DEFERRED, not required for project completion |
+| Pod-only failure (Experiment 1) | COMPLETE: 369 s, see below |
 | Readiness-failure test (Experiment 2) | NOT REQUIRED, not run |
 | Timeout gap (requests reaching Lambda's 30 s) | FOUND, narrowed, not yet located (see "Reliability gap") |
 
@@ -30,8 +38,8 @@ The Karpenter GPU instance was terminated with `aws ec2 terminate-instances`. AW
 |---|---|---|
 | Pod | (the original vLLM pod) | `vllm-687b7b9c45-lfvl5` |
 | NodeClaim | `gpu-7cf6r` | `gpu-dc9j4` |
-| Node | `ip-172-31-29-117.ec2.internal` | `ip-172-31-10-203.ec2.internal` |
-| EC2 instance | `i-0123456789abcdef0` (g5.xlarge) | a new g5.xlarge |
+| Node | `<gpu-node>` | `<gpu-node-2>` |
+| EC2 instance | `i-xxxxxxxx` (g5.xlarge) | a new g5.xlarge |
 | Availability zone | us-east-1d | **us-east-1b** |
 
 ### Timestamps (UTC, 2026-11-11)
@@ -149,6 +157,14 @@ Which call was active, and where the extra time went, is **not established**. Fi
 
 **Status: a discovered gap, not diagnosed.** The timeout implementation was not changed.
 
+### Reproduction scripts
+
+The local reproductions are preserved in [`scripts/repro/`](../../scripts/repro/): `vllm_hang_probe.py` (the per-socket timeout versus a hung or trickling server) and `agent_hang_repro.py` with `local_mcp_server.py` (the full agent loop against a hung vLLM). They run locally with no AWS. They show the simple hang path is bounded; they do **not** reproduce the 30 s outage behaviour.
+
+### Further indication from the pod-failure run
+
+The pod-failure result file also shows three requests of about 31 s during the outage (see Experiment 1). If those are Lambda timeouts, the gap reproduced in a second, independent outage. Not verified.
+
 ### Proposed next step (not done)
 
 Add log lines at the stage boundaries inside the request (discovery start/end, vLLM call start/end, session close start/end) and repeat one controlled outage, or reproduce the stuck path from a Lambda-like environment. That would show in one run which stage runs past the deadline. The deadline cannot be enforced by timeouts on blocking calls alone; a watchdog that returns a controlled 504 shortly before the Lambda timeout would be the safety net, but that is a design change and was not started.
@@ -174,19 +190,49 @@ This was a **measurement-tool failure, not a platform failure**: Karpenter and t
 | N8, NLB target becomes healthy | **not captured exactly.** Known only: Pod Ready 06:45:14, first successful API request 06:46:18. The NLB was necessarily serving the recovered target by the second one; no first-healthy time was recorded and none is estimated. |
 | Failure start -> successful inference (true MTTR) | not measurable; only "replacement pod created -> successful inference" (21 min 06 s) is |
 | Which fraction of the 8 min 13 s was quota vs other causes | not measured |
-| What callers saw during the outage | partly: 5 requests ended at 30 s as Lambda timeouts (above); the status codes API Gateway returned were not recorded |
+| What callers saw during the outage | partly: 5 requests ended at 30 s as Lambda timeouts (node run, from Lambda logs); 3 requests of about 31 s in the pod run, cause unverified; the status codes API Gateway returned were not recorded in the node run |
 
-## Experiment 1 (pod-only failure): deferred
+## Experiment 1 (measured): pod failure on a surviving GPU node
 
-**Decision: DEFERRED / NOT REQUIRED for project completion. The Deployment was already deleted and is not recreated for this.**
+Evidence: [`results/pod-failure-2026-11-11.txt`](results/pod-failure-2026-11-11.txt) (the script's saved output). The Deployment, replica count and node were untouched; only the pod was deleted (`kubectl delete pod ... --wait=false`).
 
-The test would have compared a pod failure on a surviving GPU node with the full node failure. The expectation (a hypothesis, never tested) was: same node, image cached, no EC2 provisioning, so only the model reload dominates. The node-failure experiment already covered the broader and more important recovery path, and another GPU cycle and model initialization is not justified by the learning objective.
+| Moment | Time (UTC) | Source |
+|---|---|---|
+| P0 pod deletion requested | 06:17:08.6 | script clock at the delete command |
+| P1 replacement pod created | 06:17:10 | Kubernetes |
+| P2 replacement bound to a node | 06:17:11 | Kubernetes |
+| P3 vLLM container started | 06:17:12 | Kubernetes |
+| P4b vLLM serving (its log line) | 06:22:19.4 | vLLM log |
+| P4a pod Ready | 06:22:24 | Kubernetes |
+| P4c NLB target healthy | 06:22:53.7 | polled (resolution about 3 to 5 s) |
+| P5 first successful request | 06:23:17.5 | controlled request |
 
-Everything else the original plan predicted for this experiment is untested. The script supports it (`measure_vllm_recovery.py pod`) if it is ever wanted.
+| Interval | Duration |
+|---|---|
+| container start to Ready (model startup) | 312 s |
+| pod Ready after the failure | 315 s |
+| NLB recovery after Ready | 30 s |
+| **Pod failure to first successful request** | **369 s** (6 min 9 s) |
+
+Recorded by the script: the image was already cached on the node, the replacement landed on the **same node**, and vLLM downloaded the weights again (about 106 s reported), because the model cache is an `emptyDir`.
+
+What the caller saw: three controlled requests during the outage failed after about 31 s each (the script labelled them "HTTP 503 endpoint not found"), then the fourth, at +358 s, succeeded in 11 s. **Caveat:** that label is the script's own mapping of status 503. A 31 s duration matches Lambda's 30 s hard timeout, and API Gateway HTTP APIs also return 503 for a Lambda timeout, so these may be the same 30 s timeouts seen in the node experiment rather than the gateway's own endpoint-not-found error. No Lambda logs were preserved for this window, so this is unverified (see Finding 2).
+
+### Pod failure versus node failure
+
+| | Pod failure | Node failure |
+|---|---|---|
+| New EC2 capacity | none (node survived) | required |
+| Quota delay | none | yes, `VcpuLimitExceeded` (Finding 1) |
+| Image pull | none (cached) | 5 min 9 s (fresh node) |
+| Model download and load | about 312 s | about 328 s |
+| Time to a successful request | 369 s from the failure | 21 min 06 s from the replacement pod (the failure start was not captured) |
+
+The two runs differ in more than the node: they were measured differently (the pod run has an exact start, the node run does not), so compare the durations of the stages, not the headline totals. What the data supports: with the node alive, recovery is dominated by the model reload; a lost node adds the quota delay and the image pull on top of the same model reload.
 
 ## Experiment 2 (readiness failure): not required
 
-Not run. Its hypotheses about steady-state probe behavior (how long Kubernetes would keep a hung vLLM in the endpoints, and whether the NLB would fail open with a single target) are untested. Note that these were written for a readiness probe with a failure threshold of 60; the manifest now has `failureThreshold: 3`, so the old numbers (about 600 s) no longer apply. The script can run it (`readiness --inject`, which needs a deliberate confirmation) but there is no plan to.
+Not run, by decision. Its hypotheses about steady-state probe behavior (how long Kubernetes would keep a hung vLLM in the endpoints, and whether the NLB would fail open with a single target) are untested. Note that these were written for a readiness probe with a failure threshold of 60; the manifest now has `failureThreshold: 3`, so the old numbers (about 600 s) no longer apply. The script can run it (`readiness --inject`, which needs a deliberate confirmation) but there is no plan to.
 
 ## Readiness behavior (observed)
 
