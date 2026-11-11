@@ -80,4 +80,9 @@ variable "onprem_vllm_base_url" {
   description = "Base URL of the on-prem vLLM endpoint (the Nginx load balancer in front of the two replicas), reached through the WireGuard router. Used when a request says provider=vllm and target=onprem."
   type        = string
   default     = "http://10.100.0.3:18082"
+
+  validation {
+    condition     = can(regex("^http://[0-9.]+:[0-9]+$", var.onprem_vllm_base_url))
+    error_message = "onprem_vllm_base_url must look like http://<ipv4>:<port>; the security group rules are derived from it."
+  }
 }
