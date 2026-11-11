@@ -60,6 +60,7 @@ resource "aws_lambda_function" "gateway" {
       AGENTCORE_RUNTIME_ARN      = aws_bedrockagentcore_agent_runtime.mcp.agent_runtime_arn
       APPROVAL_STATE_MACHINE_ARN = aws_sfn_state_machine.approval.arn
       VLLM_PORT                  = tostring(var.inference_port)
+      ONPREM_VLLM_BASE_URL       = var.onprem_vllm_base_url
     }
   }
 

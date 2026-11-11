@@ -40,6 +40,18 @@ Code: `approval.py`, `scripts/approve.py`, `write-executor/handler.py`, `terrafo
 
 ## vLLM path
 
+`provider=vllm` takes an optional `target` naming where the model runs (a logical name only, never a URL):
+
+| Request | Route |
+|---|---|
+| `target` omitted or `"eks"` | EKS vLLM (the path below) |
+| `target: "onprem"` | Lambda -> router (WireGuard) -> on-prem Nginx load balancer -> two on-prem vLLM replicas. The address is `ONPREM_VLLM_BASE_URL`, set by Terraform (`onprem_vllm_base_url`). |
+| any other value | `400 invalid_target`; there is no fallback to EKS |
+
+`VLLM_BASE_URL`, if set on the Lambda, overrides both (debugging). `target=onprem` with `ONPREM_VLLM_BASE_URL` unset is a `503 vllm_onprem_not_configured`. The on-prem route also needs the Lambda security group egress, the Lambda subnet route and the router security group to allow the on-prem port; those are not created by the `target` change.
+
+The EKS path:
+
 ```text
 Lambda (in the VPC; outbound through a self-managed NAT/router instance)
   -> runtime NLB discovery (vllm.py: resource tag service.k8s.aws/stack = default/vllm)

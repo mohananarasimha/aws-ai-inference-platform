@@ -8,7 +8,7 @@ from config import MAX_QUEUED_SECONDS, MODEL_MAP, VLLM_MODEL
 from deadline import ComponentTimeout, DeadlineExceeded, request_budget
 from metrics import emit_request_metrics
 from rag import build_rag_context, retrieve
-from vllm import ERROR_STATUS, VLLMError, connectivity_test
+from vllm import ALLOWED_TARGETS, ERROR_STATUS, TARGET_EKS, VLLMError, connectivity_test
 
 
 def api_response(status_code, body):
@@ -215,6 +215,19 @@ def _handle(event, context, outcome):
 
         outcome["provider"] = provider
 
+        # Logical inference target for provider=vllm; never a URL.
+        target = body.get("target") or TARGET_EKS
+
+        if target not in ALLOWED_TARGETS:
+            return api_response(
+                400,
+                {
+                    "request_id": request_id,
+                    "error": "invalid_target",
+                    "allowed_targets": list(ALLOWED_TARGETS)
+                }
+            )
+
         prompt = body.get("prompt")
 
         model_class = body.get(
@@ -318,7 +331,8 @@ def _handle(event, context, outcome):
                     authorization_header=authorization_header,
                     request_id=request_id,
                     provider=provider,
-                    deadline=deadline
+                    deadline=deadline,
+                    target=target
                 )
             )
 

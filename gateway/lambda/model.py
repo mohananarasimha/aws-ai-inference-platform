@@ -14,10 +14,10 @@ from botocore.exceptions import ConnectTimeoutError, ReadTimeoutError
 from clients import aws_client
 from config import BEDROCK_MAX_TIMEOUT_SECONDS, VLLM_MAX_TOKENS
 from deadline import ComponentTimeout, call_timeout
-from vllm import VLLMError, request_chat
+from vllm import TARGET_EKS, VLLMError, request_chat
 
 
-def converse(provider, model, messages, tools, deadline=None):
+def converse(provider, model, messages, tools, deadline=None, target=TARGET_EKS):
     """
     One model turn. Returns a Bedrock Converse-shaped dict with
     output.message, usage.inputTokens and usage.outputTokens.
@@ -27,7 +27,7 @@ def converse(provider, model, messages, tools, deadline=None):
         return _bedrock_converse(model, messages, tools, deadline)
 
     if provider == "vllm":
-        return _vllm_converse(model, messages, tools, deadline)
+        return _vllm_converse(model, messages, tools, deadline, target)
 
     raise ValueError(f"unknown provider: {provider}")
 
@@ -58,7 +58,7 @@ def _bedrock_converse(model, messages, tools, deadline):
         raise ComponentTimeout("bedrock") from exc
 
 
-def _vllm_converse(model, messages, tools, deadline):
+def _vllm_converse(model, messages, tools, deadline, target=TARGET_EKS):
 
     payload = {
         "model": model,
@@ -71,7 +71,7 @@ def _vllm_converse(model, messages, tools, deadline):
         payload["tools"] = tools_to_openai(tools)
 
     return response_from_openai(
-        request_chat(payload, deadline)
+        request_chat(payload, deadline, target)
     )
 
 

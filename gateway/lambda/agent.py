@@ -23,7 +23,8 @@ async def run_agent(
     authorization_header,
     request_id,
     provider="bedrock",
-    deadline=None
+    deadline=None,
+    target="eks"
 ):
     """
     This is the actual agent loop.
@@ -114,7 +115,8 @@ async def run_agent(
                 model_id,
                 messages,
                 bedrock_tools,
-                deadline
+                deadline,
+                target
             )
 
             model_calls_ms.append(

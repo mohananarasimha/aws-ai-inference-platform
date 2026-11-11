@@ -30,6 +30,7 @@ def no_real_discovery(monkeypatch):
         raise vllm.VLLMError("vllm_endpoint_not_found")
 
     monkeypatch.delenv("VLLM_BASE_URL", raising=False)
+    monkeypatch.delenv("ONPREM_VLLM_BASE_URL", raising=False)
     monkeypatch.setattr(vllm, "discover_base_url", not_found)
     monkeypatch.setattr(vllm, "_discovered_base_url", None)
 

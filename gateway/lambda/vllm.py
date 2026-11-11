@@ -29,8 +29,17 @@ MAX_BODY_CHARS = 2000
 ERROR_STATUS = {
     "vllm_endpoint_not_found": 503,
     "vllm_endpoint_ambiguous": 500,
+    "vllm_invalid_target": 400,
+    "vllm_onprem_not_configured": 503,
     "vllm_timeout": 504
 }
+
+# Logical inference targets a request may name. The caller never supplies a
+# URL: "eks" is found by NLB discovery, "onprem" comes from the
+# ONPREM_VLLM_BASE_URL environment variable (set by Terraform).
+TARGET_EKS = "eks"
+TARGET_ONPREM = "onprem"
+ALLOWED_TARGETS = (TARGET_EKS, TARGET_ONPREM)
 
 _discovered_base_url = None
 
@@ -102,11 +111,17 @@ def discover_base_url(timeout=DISCOVERY_MAX_TIMEOUT_SECONDS):
     return f"http://{balancers[0]['DNSName']}:{port}"
 
 
-def resolve_base_url(deadline=None):
+def resolve_base_url(deadline=None, target=TARGET_EKS):
     """
-    VLLM_BASE_URL overrides discovery. A discovered URL is kept for the life
-    of the container and dropped when a request cannot connect to it, so a
-    recreated NLB is found again.
+    Where this request goes, in order:
+
+    1. VLLM_BASE_URL (global override for debugging and tests) wins.
+    2. target "onprem": ONPREM_VLLM_BASE_URL. Missing is a configuration
+       error; it never falls back to EKS.
+    3. target "eks" (the default): NLB discovery. A discovered URL is kept
+       for the life of the container and dropped when a request cannot
+       connect to it, so a recreated NLB is found again.
+    4. Anything else is an error, never a silent fall back to EKS.
     """
 
     global _discovered_base_url
@@ -115,6 +130,17 @@ def resolve_base_url(deadline=None):
 
     if override:
         return override
+
+    if target not in ALLOWED_TARGETS:
+        raise VLLMError("vllm_invalid_target")
+
+    if target == TARGET_ONPREM:
+        onprem_url = os.environ.get("ONPREM_VLLM_BASE_URL")
+
+        if not onprem_url:
+            raise VLLMError("vllm_onprem_not_configured")
+
+        return onprem_url
 
     if _discovered_base_url is None:
         _discovered_base_url = discover_base_url(
@@ -261,14 +287,15 @@ def is_timeout(exc):
     return isinstance(exc, TimeoutError)
 
 
-def request_chat(payload, deadline=None):
+def request_chat(payload, deadline=None, target=TARGET_EKS):
     """
     POST one OpenAI-style chat completion request to vLLM and return the
     parsed JSON body. One attempt, no retries, no fallback. Used by the
-    model adapter (model.py).
+    model adapter (model.py). `target` is a logical name (see
+    resolve_base_url), never a URL.
     """
 
-    base_url = resolve_base_url(deadline)
+    base_url = resolve_base_url(deadline, target)
 
     # Taken after discovery, so the call only gets what discovery left.
     timeout = call_timeout(deadline, VLLM_MAX_TIMEOUT_SECONDS, "vllm")
@@ -305,7 +332,10 @@ def request_chat(payload, deadline=None):
 
     except Exception as exc:
 
-        forget_discovered_base_url()
+        # Only the discovered EKS address is cached; an on-prem failure must
+        # not drop it.
+        if target == TARGET_EKS:
+            forget_discovered_base_url()
 
         raise VLLMError(
             "vllm_timeout" if is_timeout(exc) else "vllm_unavailable"

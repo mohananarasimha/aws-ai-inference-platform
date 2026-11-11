@@ -321,7 +321,7 @@ def test_vllm_timeout_stays_distinguishable(monkeypatch, fake_openai, fake_mcp, 
 
 
 def test_vllm_timeout_that_used_up_the_budget_is_a_deadline_error(monkeypatch, fake_mcp, clock):
-    def burn(payload, deadline=None):
+    def burn(payload, deadline=None, target="eks"):
         clock.advance(BUDGET)
         raise vllm.VLLMError("vllm_timeout")
 

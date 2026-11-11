@@ -112,7 +112,7 @@ curl -s -X POST "$(terraform output -raw invoke_url)" \
   -d '{"prompt": "Say hi in five words", "provider": "bedrock", "model_class": "fast"}'
 ```
 
-Request fields: `prompt` (required), `provider` (`bedrock` or `vllm`), `model_class` (`fast` or `quality`, Bedrock only), `rag` (`true` to retrieve from the Knowledge Base first). A request that needs a write action returns `202` with an approval pending; run `scripts/approve.py` to answer it.
+Request fields: `prompt` (required), `provider` (`bedrock` or `vllm`), `target` (with `provider=vllm` only: `eks`, the default, or `onprem`; see [`docs/architecture.md`](docs/architecture.md)), `model_class` (`fast` or `quality`, Bedrock only), `rag` (`true` to retrieve from the Knowledge Base first). A request that needs a write action returns `202` with an approval pending; run `scripts/approve.py` to answer it.
 
 ## Tests
 
