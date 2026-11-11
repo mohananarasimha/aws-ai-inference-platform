@@ -1,6 +1,6 @@
 # Decision: split Terraform into three stacks
 
-Status: **implemented 2026-11-09 (files moved, `init`/`validate`/`plan` pass per stack). Nothing has been applied.** Approved with one change: the security-group half of `inference_nlb.tf` lives in `eks-addons`.
+Status: **implemented 2026-11-09 and in use.** Approved with one change: the security-group half of `inference_nlb.tf` lives in `eks-addons`.
 Supersedes the earlier "stay flat in `terraform/environments/dev`" decision.
 
 ## Why
@@ -24,7 +24,7 @@ Each stack has its own `backend.tf` (local state), `versions.tf`, `providers.tf`
 
 | Stack | Files |
 |---|---|
-| `app` | `apigateway.tf` `cognito.tf` `lambda.tf` `iam.tf` `rag_s3.tf` `rag_iam.tf` `bedrock_knowledge_base.tf` `agentcore.tf` `agentcore_iam.tf` `approval.tf` `write_executor.tf` `network.tf` (the NLB hostname is no longer looked up in Terraform; see below) |
+| `app` | `apigateway.tf` `cognito.tf` `lambda.tf` `iam.tf` `rag_s3.tf` `rag_iam.tf` `bedrock_knowledge_base.tf` `agentcore.tf` `agentcore_iam.tf` `approval.tf` `write_executor.tf` `network.tf` (the Lambda's security group and its rules towards the NAT/router; the NLB hostname is no longer looked up in Terraform, see below) |
 | `eks` | `eks.tf` `eks_iam.tf` |
 | `eks-addons` | `karpenter.tf` `karpenter_iam.tf` `gpu_nodepool.tf` `nvidia_device_plugin.tf` `aws_lbc.tf` `inference_nlb.tf` (NLB security group, its two rules, and the egress rule on the Lambda security group), `charts/karpenter-gpu/`, `policies/`, `manifests/` |
 

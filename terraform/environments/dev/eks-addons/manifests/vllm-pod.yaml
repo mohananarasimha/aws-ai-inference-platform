@@ -1,3 +1,6 @@
+# NOT part of the platform and not applied by up.sh. A bare single pod for a manual smoke test of
+# vLLM on a GPU node (no Service, no probes, no tool-calling flags). The active workload is the
+# Deployment in vllm-deploy.yaml. scripts/down.sh only deletes this pod if it was left behind.
 apiVersion: v1
 kind: Pod
 metadata:
@@ -18,7 +21,7 @@ spec:
 
   containers:
     - name: vllm
-      image: vllm/vllm-openai:latest
+      image: vllm/vllm-openai:v0.33.0
 
       args:
         - Qwen/Qwen2.5-7B-Instruct

@@ -1,12 +1,12 @@
 # Decision: CloudWatch-only observability for the gateway, vLLM and EKS
 
-Status: **implemented 2026-11-09 (code, Terraform and tests; nothing applied).** The vLLM, GPU and Kubernetes dashboard queries are drafts until the first live run.
+Status: **implemented and applied.** The vLLM, GPU and Kubernetes dashboard queries are still drafts: no record in this repository shows them checked against live series (see [../known-limitations.md](../known-limitations.md#observability)).
 
 ## What
 
 - **Lambda agent:** CloudWatch Embedded Metric Format, one record per finished request, emitted by the handler wrapper (`gateway/lambda/metrics.py`). Namespace `EnterpriseAIPlatform/Gateway`. Metrics: `RequestCount`, `RequestLatency` (Provider, Status), `ModelLatency` (Provider), `TimeoutCount` (Provider, Component, Type), `ErrorCount` (Provider, ErrorType). 4xx responses and the `vllm_test` diagnostic are not counted. RAG and MCP timings stay in the structured logs.
 - **vLLM, GPU, Kubernetes:** the `amazon-cloudwatch-observability` EKS add-on (`eks-addons/cloudwatch_observability.tf`), OTel Container Insights only. The add-on finds vLLM itself (any container whose image name contains `vllm`, declared port 8000, Running pods) and manages the DCGM exporter. Metrics go to CloudWatch over OTLP and are read with PromQL.
-- **Dashboard:** one, in `app` (`dashboard.tf`), 10 widgets: 4 agent/Lambda (metric widgets), 4 vLLM, 2 GPU/cluster (PromQL `chart` widgets).
+- **Dashboard:** one, in `app` (`dashboard.tf`), 11 widgets: 4 agent/Lambda (metric widgets), 4 vLLM, 2 GPU/cluster (PromQL `chart` widgets) and 1 inference-NLB healthy/unhealthy targets (a metric widget on `AWS/NetworkELB`).
 
 ## Why this shape
 

@@ -1,6 +1,6 @@
 # Decision: measure vLLM cold start first; defer autoscaling
 
-Status: **measurement tooling implemented 2026-11-11; autoscaling deliberately not implemented.**
+Status: **cold start measured 2026-11-11; autoscaling deliberately not implemented.**
 
 ## The question
 
@@ -24,7 +24,7 @@ Pod Ready is driven by a probe that runs every 10 s, so it can lag the applicati
 
 ## Probes
 
-The vLLM Deployment has a readiness probe only (`/health`, every 10 s, up to 60 failures). That is correct: the Service routes only to Ready pods, the load balancer runs its own `/health` check before sending traffic, and readiness failures never restart the container. There is no liveness or startup probe, so a slow start cannot get the pod killed. A startup probe would not shorten the cold start, so none was added.
+The vLLM Deployment has a readiness probe only (`/health`, every 10 s, `failureThreshold: 3`). That is correct: the Service routes only to Ready pods, the load balancer runs its own `/health` check before sending traffic, and readiness failures never restart the container. There is no liveness or startup probe, so a slow start cannot get the pod killed. A startup probe would not shorten the cold start, so none was added.
 
 ## Why autoscaling is deferred
 

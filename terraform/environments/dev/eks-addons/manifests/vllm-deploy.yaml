@@ -64,8 +64,9 @@ spec:
             - name: hf-cache
               mountPath: /root/.cache/huggingface
 
-          # Model download + load takes several minutes on a fresh node:
-          # 60 x 10 s of failures are tolerated before the pod is left unready.
+          # Model download + load takes several minutes on a fresh node. There is no liveness or
+          # startup probe, so failures here only keep the pod out of the Service; they never
+          # restart the container. 3 x 10 s of failures mark a running pod NotReady.
           readinessProbe:
             httpGet:
               path: /health

@@ -1,3 +1,10 @@
+# Build log: managed-model phases (1 to 3 and 6)
+
+Historical learning notes from the first phases, kept because they hold the only recorded numbers for the Bedrock, RAG and MCP work (Nova Micro 864 ms vs Nova Lite 1540 ms; MCP session reuse from about 3.5 to 5 s down to about 1.2 s). They are narrative, not raw results. Phases 4 and 5 (MCP tools, approval) were not written up here, and nothing after phase 6 is recorded in this file.
+
+**Current project status is in the README ("Project status"), not here.** For the vLLM, EKS and failure work see `docs/experiments/` and `docs/vllm-cold-start.md`.
+
+---
 
 Phase 1 — AI Gateway + Managed Model
 

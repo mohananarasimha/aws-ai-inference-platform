@@ -34,6 +34,27 @@ flowchart LR
 - **One request deadline:** every downstream call (Bedrock, vLLM, RAG, MCP, approval) gets `min(component maximum, time left)` of a single budget kept below the Lambda and API Gateway limits, and the response says which component timed out.
 - **Observability:** Lambda emits CloudWatch EMF metrics (requests, latency, model latency, timeouts, errors). The CloudWatch Observability EKS add-on (OpenTelemetry mode) collects vLLM, GPU and Kubernetes metrics into one CloudWatch dashboard.
 
+## Project status
+
+**Implemented and exercised** (evidence is the code, its tests, and where noted a recorded run):
+
+| Capability | Evidence |
+|---|---|
+| Authenticated API (Cognito, API Gateway JWT, Lambda), Bedrock inference, model adapter | code and tests; latencies in [`docs/progress.md`](docs/progress.md) |
+| RAG (Bedrock Knowledge Base), MCP tools via AgentCore, controlled write approval | code and unit tests against fakes; narrative notes in `docs/progress.md`; **no live end-to-end run is recorded in this repo** |
+| Self-hosted vLLM on EKS (Karpenter GPU, NLB, runtime discovery) | one request through the full path recorded in [`docs/vllm-cold-start.md`](docs/vllm-cold-start.md); tool calling, RAG and approval through vLLM are tested against a fake server only |
+| Request deadline budgeting | implemented and unit tested; **a real outage still reached the 30 s Lambda timeout** (open, see limitations) |
+| CloudWatch observability | Lambda metrics and dashboard Terraform exist; the vLLM, GPU and cluster queries are unverified drafts |
+| Cold-start measurement | measured: 701 s to Ready on a fresh GPU node |
+| Pod failure recovery | measured: 369 s |
+| GPU node failure recovery | measured, with the failure start not captured: about 21 minutes from the replacement pod to a successful request |
+
+**Measured results:** [`docs/vllm-cold-start.md`](docs/vllm-cold-start.md), [`docs/experiments/vllm-failure-recovery.md`](docs/experiments/vllm-failure-recovery.md), raw captures in [`docs/experiments/results/`](docs/experiments/results/). Headline finding: GPU provisioning took about 41 s; the image pull (about 299 s) and model start (about 347 s) dominate, and with the GPU quota equal to steady-state use, a lost node also waited on `VcpuLimitExceeded`.
+
+**Deferred / not validated:** `1 -> 2` GPU autoscaling (quota), readiness-failure test, KServe comparison, alarms and tracing, on-prem inference experiments (no evidence in this repo).
+
+More: [`docs/architecture.md`](docs/architecture.md), [`docs/known-limitations.md`](docs/known-limitations.md), [`docs/decisions/`](docs/decisions/).
+
 ## Repository layout
 
 ```
@@ -46,12 +67,12 @@ gateway/lambda/ Agent code (handler, agent loop, model adapter, RAG, MCP client,
 gateway/tests/  Unit tests (fake OpenAI-compatible server; no AWS, GPU or network needed)
 mcp-agentcore/  MCP tool server deployed to AgentCore
 write-executor/ Lambda that runs an approved write action
-scripts/        up.sh, down.sh, approve.py, measure_vllm_cold_start.py (read-only cold-start timing), measure_vllm_recovery.py (failure and recovery experiments; injects only with --inject)
+scripts/        up.sh, down.sh, approve.py, measure_vllm_cold_start.py (read-only cold-start timing), measure_vllm_recovery.py (failure and recovery experiments; injects only with --inject), repro/ (local reproductions of the timeout gap)
 data/           Documents ingested into the Knowledge Base
 agent/          Early standalone command-line agent that talks to the MCP server (superseded by gateway/lambda)
 mcp-server/     Early local read-only MCP server prototype (the deployed one is mcp-agentcore/)
 EnterpriseAIMCP/ A separate AgentCore CLI project with its own CDK; an earlier deployment path, not used by the Terraform here
-docs/            vllm-cold-start.md (how cold start is measured and what it showed); experiments/vllm-failure-recovery.md (GPU node failure measured; pod and readiness experiments deferred; quota and timeout findings); decisions/ holds why the Terraform is split into three stacks, the observability design, and why autoscaling is deferred
+docs/            architecture.md, known-limitations.md, vllm-cold-start.md (how cold start is measured and what it showed), experiments/ (failure and recovery report, results/ raw captures), decisions/ (why three Terraform stacks, the observability design, why autoscaling is deferred), progress.md (historical build log)
 ```
 
 Three stacks, each with its own local state and a plain `terraform apply` (no `-target`). Order: `app` -> `eks` -> `eks-addons` -> vLLM manifests. See [`docs/decisions/terraform-stacks.md`](docs/decisions/terraform-stacks.md).
@@ -101,7 +122,7 @@ python3 -m venv .venv && .venv/bin/pip install pytest boto3 mcp==2.3.0 httpx2==2
 .venv/bin/python -m pytest tests -q
 ```
 
-The cold-start script has its own tests: `.venv/bin/python -m pytest ../scripts/tests -q` (no cluster needed).
+The two measurement scripts have their own tests: `.venv/bin/python -m pytest ../scripts/tests -q` (fake cluster and clock; no AWS, cluster or GPU needed).
 
 The tests cover the Bedrock and vLLM paths, RAG, MCP tool calls, approval, the request deadline, timeouts and the metrics records, against fakes.
 
@@ -111,7 +132,6 @@ The tests cover the Bedrock and vLLM paths, RAG, MCP tool calls, approval, the r
 - Terraform state is local. A remote backend is the obvious next step.
 - The Lambda's outbound traffic depends on one self-managed NAT instance, which is a single point of failure.
 - The CloudWatch agent uses the AWS-managed `CloudWatchAgentServerPolicy`, which is broader than it needs to be.
-- The vLLM, GPU and cluster widgets on the dashboard use PromQL that was written from the vLLM and DCGM documentation and should be checked against live series.
-- A GPU node failure took about 21 minutes to recover from, partly because the GPU quota (4 vCPUs) equals steady-state use; and requests during an outage can still reach the Lambda's 30 s hard timeout (under investigation). See `docs/experiments/vllm-failure-recovery.md`.
+- See [`docs/known-limitations.md`](docs/known-limitations.md) for the active list: the GPU quota (4 vCPUs) that also delayed node-failure recovery, and the unresolved 30 s Lambda timeout gap.
 - No CI, load tests, autoscaling on metrics or distributed tracing yet.
 - Nothing here is a substitute for review before you run it in an account you care about.
