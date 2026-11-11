@@ -41,7 +41,7 @@ A fresh GPU node takes about 701 s to a Ready pod: the image (about 9.7 GB) take
 
 - `1 -> 2` GPU autoscaling (quota).
 - Readiness-failure behaviour of a running but hung vLLM (a test was designed and deliberately not run; the readiness threshold has since changed from 60 to 3).
-- On-prem inference experiments: see [experiments/onprem-vllm-load-test.md](experiments/onprem-vllm-load-test.md) if present, otherwise nothing about them is evidenced in this repository.
+- On-prem inference experiments: see the next section.
 - The write/approval path, RAG and tool calling through vLLM have unit tests against fakes; no live end-to-end run is recorded in this repository.
 
 ## Operations
@@ -50,3 +50,9 @@ A fresh GPU node takes about 701 s to a Ready pod: the image (about 9.7 GB) take
 - **The Lambda's outbound traffic goes through one self-managed NAT/router instance** that this repo does not create; if it stops, every Bedrock, RAG and MCP call hangs.
 - **Destroying the app stack can fail on the Lambda security group** for up to about 40 minutes after the function is deleted, because AWS releases the Lambda network interfaces asynchronously. `scripts/down.sh` waits and retries.
 - `scripts/measure_vllm_recovery.py` aborts if the Kubernetes API has a transient error after a failure is injected, which cost the node run its start time. It should retry instead.
+
+## On-prem inference experiments: no evidence preserved
+
+The project owner reports earlier self-hosted vLLM experiments on a separate on-prem GPU machine (RTX 4090 class): single-replica load behaviour, replicas behind a load balancer, and a tensor-parallel comparison. **None of the raw results, scripts, configuration or numbers were preserved in this repository**, and none were found elsewhere on the owner's laptop (local files, shell history and earlier assistant sessions were searched; they show only SSH access to a remote host, not results). So no on-prem figure, concurrency threshold or learning from those experiments is claimed anywhere in this repository, and no report was written from memory.
+
+To make them citable they would have to be rerun, keeping one report and one small results file: hardware and vLLM version/flags, the exact load command, a table of concurrency against throughput, p95 latency, running and waiting requests, KV-cache usage and preemptions, and the conclusions. Specific things worth confirming on the rerun rather than assuming: the effect of the default 64 MiB `/dev/shm` on tensor-parallel startup, and how GPU interconnect affects TP versus independent replicas.
