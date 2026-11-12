@@ -43,3 +43,8 @@ asd.json
 # Raw experiment captures; sanitized copies live in docs/experiments/results/
 exp1-pod.txt
 exp3-node.txt
+
+# Raw output of the on-prem load test, when run from the repo root; curated copies go in docs/experiments/results/
+/onprem-load-results/
+/onprem-load-timeseries.csv
+/onprem-load-timeseries.metric-names.txt

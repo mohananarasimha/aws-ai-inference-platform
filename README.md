@@ -67,7 +67,7 @@ gateway/lambda/ Agent code (handler, agent loop, model adapter, RAG, MCP client,
 gateway/tests/  Unit tests (fake OpenAI-compatible server; no AWS, GPU or network needed)
 mcp-agentcore/  MCP tool server deployed to AgentCore
 write-executor/ Lambda that runs an approved write action
-scripts/        up.sh, down.sh, approve.py, measure_vllm_cold_start.py (read-only cold-start timing), measure_vllm_recovery.py (failure and recovery experiments; injects only with --inject), repro/ (local reproductions of the timeout gap)
+scripts/        up.sh, down.sh, approve.py, measure_vllm_cold_start.py (read-only cold-start timing), measure_vllm_recovery.py (failure and recovery experiments; injects only with --inject), repro/ (local reproductions of the timeout gap), run_onprem_load_test.py and onprem_metrics.py (on-prem vLLM load test tooling, see docs/experiments/onprem-vllm-load-test.md)
 data/           Documents ingested into the Knowledge Base
 agent/          Early standalone command-line agent that talks to the MCP server (superseded by gateway/lambda)
 mcp-server/     Early local read-only MCP server prototype (the deployed one is mcp-agentcore/)
