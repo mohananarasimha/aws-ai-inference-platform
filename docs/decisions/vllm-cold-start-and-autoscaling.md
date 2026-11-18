@@ -48,3 +48,7 @@ Method, results and how to rerun it: [`../vllm-cold-start.md`](../vllm-cold-star
 ## First observed run (2026-11-11, no inference request)
 
 Pod Pending to Karpenter NodeClaim 2 s, to node Ready 41 s, container started after 313 s (299 s of it pulling the vLLM image), model ready after another 347 s (about 216 s loading weights, the rest compiling and warming up). Pod Ready 701 s after the pod was created. The model cache is an `emptyDir`, so the weights are downloaded again on every cold start. A second run on the same pod with `--test-inference` confirmed the Kubernetes-recorded numbers and showed one request through the whole path taking 11 s; the first-request and total figures from that run are not valid cold-start numbers (the script was started 19 minutes after Ready) and the script now reports `n/a` for them.
+
+
+## Kserve
+The platform currently deploys vLLM using native Kubernetes Deployment and Service resources rather than KServe. The current workload consists of a single serving runtime and model, so KServe would add control-plane complexity without materially improving reliability or scalability. KServe becomes valuable when the platform needs standardized multi-model lifecycle management, reusable serving abstractions, advanced rollout policies, or centralized autoscaling configuration.
