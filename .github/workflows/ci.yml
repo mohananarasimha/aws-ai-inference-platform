@@ -1,0 +1,54 @@
+# Static checks only: no AWS credentials, no plan, no apply, nothing deployed.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  terraform:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        stack: [app, eks, eks-addons]
+    defaults:
+      run:
+        working-directory: terraform/environments/dev/${{ matrix.stack }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.14.4
+      - run: terraform fmt -check -recursive
+      - run: terraform init -backend=false -input=false
+      - run: terraform validate
+
+  helm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+      - run: helm lint terraform/environments/dev/eks-addons/charts/karpenter-gpu
+      - run: helm template ci terraform/environments/dev/eks-addons/charts/karpenter-gpu --set instanceType=g5.xlarge --set maxCpu=4 --set maxGpus=1 --set rootVolumeSize=100Gi > /dev/null
+
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"   # the Lambda runtime
+      # boto3 is provided by the Lambda runtime, so it is not in requirements.txt.
+      - run: pip install -r gateway/lambda/requirements.txt boto3 pytest
+      - name: gateway tests
+        working-directory: gateway
+        run: python -m pytest tests -q
+      - name: script tests
+        run: python -m pytest scripts/tests -q
+      - name: shell syntax
+        run: for f in scripts/*.sh; do bash -n "$f"; done
