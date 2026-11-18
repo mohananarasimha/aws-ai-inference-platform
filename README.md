@@ -8,7 +8,7 @@ It is an infrastructure and platform engineering project. The application code i
 
 ## Problems it addresses
 
-- **One entry point for many model backends.** Callers send a prompt; the platform decides how it is served (managed Bedrock or self-hosted vLLM) behind the same auth, limits and response shape.
+- **One entry point, several model backends.** Callers choose the backend explicitly in each request (`provider`: managed Bedrock or self-hosted vLLM; for vLLM, `target`: EKS or on-prem). Every backend sits behind the same auth, throttling, request deadline and response shape. The platform does not choose a backend for the caller and does not fail over between backends.
 - **Self-hosting cost and latency, measured rather than assumed.** GPU nodes scale from zero with Karpenter; cold start, pod failure and node failure were timed and the raw captures kept.
 - **Bounded requests.** Every downstream call gets `min(component maximum, time left)` of one request budget kept below the Lambda and API Gateway limits, and the response names the component that ran out of time.
 - **Safe tool use.** The model may read through MCP tools, but a write action only runs after a human approves it.
@@ -44,8 +44,10 @@ flowchart LR
   end
 
   Lambda -->|provider=vllm, target=eks| NLB --> VLLM
-  Lambda -.->|target=onprem| Router -.->|WireGuard| OnPrem[On-prem vLLM endpoint<br/>external, not managed here]
+  Lambda -.->|provider=vllm, target=onprem| Router -.->|WireGuard| OnPrem[On-prem vLLM endpoint<br/>external, not managed here]
 ```
+
+The caller picks every edge out of the Lambda through request fields; nothing in the diagram is chosen automatically. The on-prem path is described in [On-premises inference](#on-premises-inference).
 
 More detail: [docs/architecture.md](docs/architecture.md).
 
@@ -55,8 +57,8 @@ More detail: [docs/architecture.md](docs/architecture.md).
 2. API Gateway validates the JWT and applies stage throttling (default 5 requests/s, burst 10), then invokes the gateway Lambda.
 3. The Lambda creates the request budget: 24 s, minus time spent queued before it started, and never more than the Lambda's own remaining time minus a 6 s reserve.
 4. Optional RAG: retrieve from the Bedrock Knowledge Base before the model call (any provider).
-5. The agent loop (up to 5 steps) calls the model through one adapter:
-   - `provider=bedrock`: Bedrock `Converse` (Nova Micro for `fast`, Nova Lite for `quality`).
+5. The agent loop (up to 5 steps) calls the backend **named in the request** through one adapter (see [Provider selection](#provider-selection)):
+   - `provider=bedrock` (also the default when `provider` is omitted): Bedrock `Converse` (Nova Micro for `fast`, Nova Lite for `quality`).
    - `provider=vllm`: OpenAI-compatible `/v1/chat/completions`. `target=eks` (default) finds the internal NLB at runtime by its Kubernetes service tag; `target=onprem` uses `ONPREM_VLLM_BASE_URL`.
 6. Tool calls go to the MCP server on AgentCore (read-only tools). A proposed write starts a Step Functions execution and the API returns `202`; `scripts/approve.py` approves or rejects it, and only then does the write-executor Lambda run it.
 7. The response carries the answer, timings and, on failure, a controlled error such as `504 request_deadline_exceeded` with the component and step.
@@ -77,6 +79,7 @@ More detail: [docs/architecture.md](docs/architecture.md).
 | AWS Load Balancer Controller 3.6.2 | Creates the internal NLB for the vLLM Service | `eks-addons/aws_lbc.tf`, `eks-addons/inference_nlb.tf` |
 | vLLM Deployment and Service | `Qwen/Qwen2.5-7B-Instruct` on `vllm/vllm-openai:v0.33.0` | `eks-addons/manifests/` |
 | CloudWatch Observability add-on and dashboard | vLLM, GPU, cluster metrics; one dashboard | `eks-addons/cloudwatch_observability.tf`, `app/dashboard.tf` |
+| On-prem vLLM network rules | Security group rules for `target=onprem` (the router and the remote side are not managed) | `app/network.tf`, `app/variables.tf` (`onprem_vllm_base_url`) |
 
 ## Repository layout
 
@@ -149,6 +152,48 @@ curl -s -X POST "$(terraform output -raw invoke_url)" \
 
 Request fields: `prompt` (required), `provider` (`bedrock` or `vllm`), `target` (with `provider=vllm`: `eks`, the default, or `onprem`), `model_class` (`fast` or `quality`, Bedrock only), `rag` (`true` to retrieve first).
 
+## Provider selection
+
+Selection is **explicit and per request**. The caller names the backend; configuration only says where each named backend lives.
+
+| Request | Backend | Decided by |
+|---|---|---|
+| `provider` omitted or `"bedrock"` | Bedrock `Converse`; `model_class` picks Nova Micro (`fast`, default) or Nova Lite (`quality`) | Caller (default: Bedrock) |
+| `provider: "vllm"`, `target` omitted or `"eks"` | vLLM on EKS, through the internal NLB found by tag at runtime | Caller |
+| `provider: "vllm"`, `target: "onprem"` | On-prem vLLM at `ONPREM_VLLM_BASE_URL` (Terraform variable `onprem_vllm_base_url`) | Caller; address from configuration |
+| any other `provider` / `target` | `400 invalid_provider` / `400 invalid_target` | |
+
+- **No automatic routing.** Nothing chooses a backend from load, cost, health or prompt content.
+- **No fallback or failover.** If the named backend fails, the request fails with a controlled error; it is never retried on another backend. Each vLLM call is one attempt with no retries.
+- **When the requested backend is unavailable:**
+  - vLLM: `503 vllm_endpoint_not_found` (no active NLB), `503 vllm_onprem_not_configured`, `502 vllm_unavailable` (connection or 5xx), `502 vllm_request_failed` (4xx), `504 vllm_timeout`, or `504 request_deadline_exceeded` when the request budget ran out.
+  - Bedrock: a timeout is `504 bedrock_timeout` (or `request_deadline_exceeded`); any other Bedrock error is `500 agent_invocation_failed`.
+- `target` is only used with `provider=vllm`; Bedrock requests ignore it (an invalid value is still rejected).
+- `VLLM_BASE_URL` on the Lambda overrides both vLLM targets. It is for debugging and is not set by Terraform.
+
+## On-premises inference
+
+An optional second vLLM target outside AWS, used only when a request says `provider=vllm` and `target=onprem`.
+
+```mermaid
+flowchart LR
+  Lambda[Gateway Lambda<br/>private subnet] -->|TCP to ONPREM_VLLM_BASE_URL<br/>Lambda SG egress: that host and port only| RT[Lambda subnet route table<br/>default route to router ENI]
+  RT --> Router[Router EC2<br/>source/dest check off<br/>SG ingress: Lambda subnet on 443 and the vLLM port]
+  Router -->|WireGuard tunnel| Host[Office GPU host]
+  subgraph OnPrem[On-prem, outside this repo]
+    Host --> Nginx[Nginx least_conn]
+    Nginx --> R0[vLLM replica GPU0]
+    Nginx --> R1[vLLM replica GPU1]
+  end
+```
+
+- **What Terraform manages** (`terraform/environments/dev/app/network.tf`): the Lambda security group egress rule to the on-prem host and port, and the router security group ingress rule from the Lambda subnet on that port. Both are derived from `onprem_vllm_base_url`, which must be `http://<ipv4>:<port>`.
+- **What it does not manage:** the router instance, its route table entries (kept with `removed { destroy = false }`), its OS configuration (IP forwarding, firewall/NAT rules, WireGuard peer and `AllowedIPs`), and everything on-prem. The Nginx and two-replica layout is the operator's description of the remote side; nothing in this repo deploys or verifies it.
+- **Authentication:** none at the HTTP layer. The Lambda sends plain HTTP with no API key. Protection is network-only: security groups on both AWS hops and the WireGuard tunnel between the router and the office. Callers still authenticate to API Gateway as usual.
+- **Failure handling:** the same as the EKS target: one attempt, bounded by the request deadline, no fallback to EKS or Bedrock. An on-prem failure does not clear the cached EKS address.
+- **Tested:** routing, configuration errors and the no-fallback behaviour are covered by unit tests against local fake servers (`gateway/tests/test_vllm_target.py`). Live: one operator-reported on-prem request ended in a controlled `504 request_deadline_exceeded`. Read-only inspection then found that neither security group allowed the vLLM port, the most likely cause; the rules are now in Terraform, and no successful live on-prem request has been recorded since. The router's forwarding setup has not been inspected. Load-test tooling exists ([report template](docs/experiments/onprem-vllm-load-test.md)) but has not been run.
+- **Single points of failure:** one router instance, one tunnel, one on-prem host.
+
 ## Configuration
 
 **Terraform variables you must set** (no defaults, kept in each stack's git-ignored `terraform.tfvars`):
@@ -213,7 +258,7 @@ Request fields: `prompt` (required), `provider` (`bedrock` or `vllm`), `target` 
 
 ## Operational considerations
 
-- **Failure handling.** One request budget across all calls; controlled `504` responses that name the component. A real outage showed vLLM calls overrunning the budget; the probable cause (urllib giving every NLB address a full timeout) is fixed in code and awaits a live re-test ([known limitations](docs/known-limitations.md#timeout-gap)).
+- **Failure handling.** One request budget across all calls; controlled `504` responses that name the component. There is no fallback between providers or targets: a failed backend means a failed request. A real outage showed vLLM calls overrunning the budget; the probable cause (urllib giving every NLB address a full timeout) is fixed in code and awaits a live re-test ([known limitations](docs/known-limitations.md#timeout-gap)).
 - **Single points of failure.** One vLLM replica on one GPU node (every pod or node failure is a full outage of the vLLM path until a replacement is Ready), and one self-managed NAT/router instance for the Lambda's outbound traffic.
 - **Cost.** The GPU node is the largest cost and is billed only while vLLM is deployed. The EKS control plane, system node and NAT instance bill while the stacks exist. Bedrock is billed per token.
 - **Trade-offs.** Scale-to-zero saves money but means a cold start of about 12 minutes. The 4-vCPU GPU quota blocks a second replica and slowed node-failure recovery.
@@ -222,14 +267,17 @@ Request fields: `prompt` (required), `provider` (`bedrock` or `vllm`), `target` 
 
 | Capability | Status | Evidence |
 |---|---|---|
-| Authenticated API, throttling, Bedrock inference, model adapter | Implemented and validated | Code, tests, live runs ([build log](docs/progress.md)) |
+| Authenticated API, Bedrock inference, model adapter | Implemented and validated | Code, tests, live runs with latencies in the [build log](docs/progress.md) |
+| API throttling (5 requests/s, burst 10) | Implemented | Terraform stage settings; no recorded test of a `429` |
 | Self-hosted vLLM on EKS (Karpenter GPU, NLB, runtime discovery) | Implemented and validated | Full-path request and cold-start run ([report](docs/vllm-cold-start.md)) |
 | Cold start, pod failure and node failure recovery | Measured | [experiments](docs/experiments/vllm-failure-recovery.md) |
-| RAG, MCP tools via AgentCore, approval for writes | Implemented, partly validated | Unit tests against fakes; no live end-to-end run recorded |
-| Per-request target routing (`eks` / `onprem`) | Implemented, partly validated | Unit tests. A live on-prem request ended at the deadline; the missing security-group rules are now in Terraform but not re-tested |
+| RAG, MCP tools via AgentCore | Implemented, partly validated | Unit tests against fakes. The build log has narrative live latencies (MCP session setup, retrieval); live Lambda logs show MCP tool discovery. No raw end-to-end capture |
+| Approval for write actions | Implemented, not validated live | Unit tests against fakes only; no live approval run recorded |
+| Explicit provider and target selection (`bedrock` / `vllm`, `eks` / `onprem`) | Implemented | Unit tests. EKS validated live. On-prem: no successful live request recorded (see [On-premises inference](#on-premises-inference)) |
+| Automatic routing, fallback or failover between backends | Not implemented | Each request goes to the backend it names, once |
 | Request deadline | Implemented; live re-test pending | Unit and reproduction tests; see [known limitations](docs/known-limitations.md) |
 | CloudWatch dashboard (vLLM/GPU/cluster widgets) | Implemented, not validated | PromQL drafts not checked against live series |
-| GPU load test (concurrency, TTFT, TPOT, throughput, p95, KV cache) | Postponed | Tooling ready; no results |
+| GPU load test (concurrency, TTFT, TPOT, throughput, p95, KV cache) | Postponed | On-prem tooling ready and unit tested; never run; no results |
 | `1 -> 2` GPU autoscaling, readiness-failure test | Postponed | GPU quota; test designed, not run |
 | KServe, alarms, tracing, CI deploys, remote state | Not implemented | |
 

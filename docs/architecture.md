@@ -45,10 +45,10 @@ Code: `approval.py`, `scripts/approve.py`, `write-executor/handler.py`, `terrafo
 | Request | Route |
 |---|---|
 | `target` omitted or `"eks"` | EKS vLLM (the path below) |
-| `target: "onprem"` | Lambda -> router (WireGuard) -> on-prem Nginx load balancer -> two on-prem vLLM replicas. The address is `ONPREM_VLLM_BASE_URL`, set by Terraform (`onprem_vllm_base_url`). |
+| `target: "onprem"` | Lambda -> router (WireGuard) -> on-prem endpoint at `ONPREM_VLLM_BASE_URL`, set by Terraform (`onprem_vllm_base_url`). Per the operator, that endpoint is an Nginx load balancer in front of two vLLM replicas; nothing in this repo deploys or verifies the remote side. |
 | any other value | `400 invalid_target`; there is no fallback to EKS |
 
-`VLLM_BASE_URL`, if set on the Lambda, overrides both (debugging). `target=onprem` with `ONPREM_VLLM_BASE_URL` unset is a `503 vllm_onprem_not_configured`. Terraform (`network.tf`) manages the on-prem port rules: Lambda security group egress to the on-prem host and router security group ingress from the Lambda subnet, both derived from `onprem_vllm_base_url`. Outside Terraform: the `10.100.0.3/32` route to the router ENI in the Lambda subnet's route table, and the router's own OS configuration (IP forwarding, firewall, WireGuard peer).
+The caller chooses the target; there is no automatic selection, no fallback between targets or to Bedrock, and no retry. `VLLM_BASE_URL`, if set on the Lambda, overrides both (debugging). `target=onprem` with `ONPREM_VLLM_BASE_URL` unset is a `503 vllm_onprem_not_configured`. Terraform (`network.tf`) manages the on-prem port rules: Lambda security group egress to the on-prem host and router security group ingress from the Lambda subnet, both derived from `onprem_vllm_base_url`. Outside Terraform: the `10.100.0.3/32` route to the router ENI in the Lambda subnet's route table, and the router's own OS configuration (IP forwarding, firewall, WireGuard peer).
 
 The EKS path:
 
