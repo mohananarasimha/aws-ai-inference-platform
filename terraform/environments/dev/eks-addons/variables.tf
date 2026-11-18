@@ -7,13 +7,11 @@ variable "aws_region" {
 variable "allowed_account_ids" {
   description = "AWS account IDs Terraform may run against (the personal profile account)"
   type        = list(string)
-  default     = ["111122223333"]
 }
 
 variable "vpc_id" {
   description = "VPC that contains the WireGuard/NAT router and the Lambda subnet (the default VPC)"
   type        = string
-  default     = "vpc-0123456789abcdef0"
 }
 
 variable "eks_cluster_name" {

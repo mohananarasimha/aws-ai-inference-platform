@@ -26,10 +26,11 @@ SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 ROOT=$(cd "$SCRIPT_DIR/.." && pwd)
 DEV=$ROOT/terraform/environments/dev
 MANIFESTS=$DEV/eks-addons/manifests
-export AWS_PROFILE=${AWS_PROFILE:-personal}
+# Optional local settings (git-ignored), see .env.example.
+if [ -f "$ROOT/.env" ]; then set -a; . "$ROOT/.env"; set +a; fi
+export AWS_PROFILE=${AWS_PROFILE:-default}
 export AWS_REGION=us-east-1
 
-ACCOUNT=111122223333
 STEPS="app eks eks-addons manifests"
 
 die() { echo "error: $*" >&2; exit 1; }
@@ -110,6 +111,12 @@ tf_apply() {
 
 cluster_name() { (cd "$DEV/eks" && terraform output -raw eks_cluster_name); }
 
+nlb_subnets() {
+  if [ -n "${VLLM_NLB_SUBNETS:-}" ]; then echo "$VLLM_NLB_SUBNETS"; return; fi
+  aws eks describe-cluster --name "$(cluster_name)" \
+    --query 'cluster.resourcesVpcConfig.subnetIds' --output text | tr '\t' ','
+}
+
 ensure_kubeconfig() {
   local name
   if ! name=$(cluster_name 2>/dev/null); then
@@ -131,6 +138,15 @@ done
 for file in vllm-deploy.yaml vllm-service.yaml; do
   [ -f "$MANIFESTS/$file" ] || die "missing $MANIFESTS/$file"
 done
+
+# The only account this script may touch: EXPECTED_AWS_ACCOUNT_ID, otherwise the
+# first allowed_account_ids entry in the app stack's local terraform.tfvars.
+expected_account() {
+  if [ -n "${EXPECTED_AWS_ACCOUNT_ID:-}" ]; then echo "$EXPECTED_AWS_ACCOUNT_ID"; return; fi
+  sed -n 's/^allowed_account_ids *= *\["\([0-9]\{12\}\)".*/\1/p' "$DEV/app/terraform.tfvars" 2>/dev/null | head -1
+}
+ACCOUNT=$(expected_account)
+[ -n "$ACCOUNT" ] || die "set EXPECTED_AWS_ACCOUNT_ID (see .env.example) or allowed_account_ids in $DEV/app/terraform.tfvars"
 
 actual=$(aws sts get-caller-identity --query Account --output text) \
   || die "AWS credentials for profile '$AWS_PROFILE' do not work (try: aws sso login --profile $AWS_PROFILE)"
@@ -161,7 +177,16 @@ if wanted manifests; then
 
   echo; echo "==> applying the vLLM Deployment and Service"
   run kubectl apply -f "$MANIFESTS/vllm-deploy.yaml"
-  run kubectl apply -f "$MANIFESTS/vllm-service.yaml"
+  # The Service YAML holds a ${VLLM_NLB_SUBNETS} placeholder: the NLB goes in the
+  # cluster's own subnets (the default-VPC subnets in the AZs that offer the GPU type).
+  if ! subnets=$(nlb_subnets 2>/dev/null) || [ -z "$subnets" ]; then
+    if [ "$dry" -eq 1 ]; then subnets="<cluster-subnets>"; else die "cannot read the cluster subnets; set VLLM_NLB_SUBNETS"; fi
+  fi
+  rendered=$(mktemp "${TMPDIR:-/tmp}/vllm-service.XXXXXX")
+  sed "s|\${VLLM_NLB_SUBNETS}|$subnets|" "$MANIFESTS/vllm-service.yaml" > "$rendered"
+  echo "  NLB subnets: $subnets"
+  run kubectl apply -f "$rendered"
+  rm -f "$rendered"
 
   if [ "$wait" -eq 1 ]; then
     echo; echo "==> waiting for vLLM (new GPU node, image pull, model load: can take 10+ minutes)"

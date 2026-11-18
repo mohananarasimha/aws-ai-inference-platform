@@ -27,10 +27,11 @@ SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 ROOT=$(cd "$SCRIPT_DIR/.." && pwd)
 DEV=$ROOT/terraform/environments/dev
 MANIFESTS=$DEV/eks-addons/manifests
-export AWS_PROFILE=${AWS_PROFILE:-personal}
+# Optional local settings (git-ignored), see .env.example.
+if [ -f "$ROOT/.env" ]; then set -a; . "$ROOT/.env"; set +a; fi
+export AWS_PROFILE=${AWS_PROFILE:-default}
 export AWS_REGION=us-east-1
 
-ACCOUNT=111122223333
 NLB_SG_NAME=enterprise-ai-platform-dev-inference-nlb
 STEPS="kubernetes eks-addons eks app"
 
@@ -157,6 +158,15 @@ stack_resources() {
 for tool in terraform kubectl aws; do
   command -v "$tool" >/dev/null || die "$tool is not installed or not on PATH"
 done
+
+# The only account this script may touch: EXPECTED_AWS_ACCOUNT_ID, otherwise the
+# first allowed_account_ids entry in the app stack's local terraform.tfvars.
+expected_account() {
+  if [ -n "${EXPECTED_AWS_ACCOUNT_ID:-}" ]; then echo "$EXPECTED_AWS_ACCOUNT_ID"; return; fi
+  sed -n 's/^allowed_account_ids *= *\["\([0-9]\{12\}\)".*/\1/p' "$DEV/app/terraform.tfvars" 2>/dev/null | head -1
+}
+ACCOUNT=$(expected_account)
+[ -n "$ACCOUNT" ] || die "set EXPECTED_AWS_ACCOUNT_ID (see .env.example) or allowed_account_ids in $DEV/app/terraform.tfvars"
 
 actual=$(aws sts get-caller-identity --query Account --output text) \
   || die "AWS credentials for profile '$AWS_PROFILE' do not work (try: aws sso login --profile $AWS_PROFILE)"

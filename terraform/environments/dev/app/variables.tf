@@ -7,7 +7,6 @@ variable "aws_region" {
 variable "allowed_account_ids" {
   description = "AWS account IDs Terraform may run against (the personal profile account)"
   type        = list(string)
-  default     = ["111122223333"]
 }
 
 variable "bedrock_model_id_1" {
@@ -55,19 +54,16 @@ variable "embedding_model_id" {
 variable "vpc_id" {
   description = "VPC that contains the WireGuard/NAT router and the Lambda subnet (the default VPC)"
   type        = string
-  default     = "vpc-0123456789abcdef0"
 }
 
 variable "lambda_subnet_ids" {
   description = "Dedicated private subnet(s) for the gateway Lambda, in the same AZ as the router"
   type        = list(string)
-  default     = ["subnet-0123456789abcdef0"]
 }
 
 variable "wireguard_eni_id" {
   description = "ENI of the manually created WireGuard/NAT EC2 router (route target)"
   type        = string
-  default     = "eni-0123456789abcdef0"
 }
 
 variable "inference_port" {

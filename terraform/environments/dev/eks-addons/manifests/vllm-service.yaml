@@ -6,7 +6,7 @@ metadata:
   annotations:
     service.beta.kubernetes.io/aws-load-balancer-scheme: internal
     service.beta.kubernetes.io/aws-load-balancer-nlb-target-type: ip
-    service.beta.kubernetes.io/aws-load-balancer-subnets: subnet-0aaaaaaaaaaaaaaa1,subnet-0aaaaaaaaaaaaaaa2,subnet-0aaaaaaaaaaaaaaa3,subnet-0aaaaaaaaaaaaaaa4,subnet-0aaaaaaaaaaaaaaa5
+    service.beta.kubernetes.io/aws-load-balancer-subnets: ${VLLM_NLB_SUBNETS}
     service.beta.kubernetes.io/aws-load-balancer-security-groups: enterprise-ai-platform-dev-inference-nlb
     service.beta.kubernetes.io/aws-load-balancer-manage-backend-security-group-rules: "true"
     service.beta.kubernetes.io/aws-load-balancer-attributes: load_balancing.cross_zone.enabled=true

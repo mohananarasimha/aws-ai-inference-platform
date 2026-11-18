@@ -125,7 +125,9 @@ The platform must be up (`scripts/up.sh`), with no GPU node and no vLLM Deployme
 ```bash
 kubectl delete deploy vllm --ignore-not-found     # then wait for the GPU node to disappear
 kubectl get nodes -l workload=gpu                 # expect none
-kubectl apply -f terraform/environments/dev/eks-addons/manifests/vllm-service.yaml   # load balancer only, no GPU
+SUBNETS=$(aws eks describe-cluster --name ai-inference-lab --query 'cluster.resourcesVpcConfig.subnetIds' --output text | tr '\t' ',')
+sed "s|\${VLLM_NLB_SUBNETS}|$SUBNETS|" terraform/environments/dev/eks-addons/manifests/vllm-service.yaml \
+  | kubectl apply -f -                             # load balancer only, no GPU
 scripts/measure_vllm_cold_start.py --test-inference > cold-start.txt &
 sleep 5
 kubectl apply -f terraform/environments/dev/eks-addons/manifests/vllm-deploy.yaml
