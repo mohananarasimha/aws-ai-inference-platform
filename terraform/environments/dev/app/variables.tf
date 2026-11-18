@@ -86,3 +86,15 @@ variable "onprem_vllm_base_url" {
     error_message = "onprem_vllm_base_url must look like http://<ipv4>:<port>; the security group rules are derived from it."
   }
 }
+
+variable "api_throttling_rate_limit" {
+  description = "Steady-state requests per second allowed on the API Gateway $default stage (every call can cost Bedrock tokens or GPU time)"
+  type        = number
+  default     = 5
+}
+
+variable "api_throttling_burst_limit" {
+  description = "Requests the API Gateway $default stage accepts in a burst above the rate limit"
+  type        = number
+  default     = 10
+}

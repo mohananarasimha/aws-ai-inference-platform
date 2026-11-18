@@ -9,3 +9,5 @@ log_retention_days = 14
 vpc_id             = "vpc-0123456789abcdef0"
 lambda_subnet_ids  = ["subnet-0123456789abcdef0"]
 wireguard_eni_id   = "eni-0123456789abcdef0"
+api_throttling_rate_limit  = 5
+api_throttling_burst_limit = 10
