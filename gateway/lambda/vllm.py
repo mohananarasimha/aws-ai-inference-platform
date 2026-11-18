@@ -1,8 +1,12 @@
+import http.client
+import io
 import json
 import os
+import socket
 import time
 import urllib.error
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 
 import boto3
 from botocore.config import Config
@@ -42,6 +46,104 @@ TARGET_ONPREM = "onprem"
 ALLOWED_TARGETS = (TARGET_EKS, TARGET_ONPREM)
 
 _discovered_base_url = None
+
+
+# ---- HTTP with a total time limit -----------------------------------------------
+# urllib's timeout is per socket operation: create_connection gives EVERY address
+# a host resolves to the full timeout, getaddrinfo has no timeout at all, and each
+# read restarts the clock. The vLLM NLB name resolves to one address per subnet,
+# so an outage where connects go unanswered took several full timeouts and ran
+# into the Lambda's 30 s kill. Here the timeout is the total for DNS, connecting
+# (all addresses together), sending and reading the whole response.
+
+_dns = ThreadPoolExecutor(max_workers=2, thread_name_prefix="vllm-dns")
+
+
+def _left(expires):
+    seconds = expires - time.monotonic()
+
+    if seconds <= 0:
+        raise TimeoutError("timed out")
+
+    return seconds
+
+
+class _DeadlineReader(io.RawIOBase):
+    """Reads from the socket with whatever is left of the total, never more."""
+
+    def __init__(self, sock, expires):
+        self._sock = sock
+        self._raw = sock.makefile("rb", buffering=0)
+        self._expires = expires
+
+    def readable(self):
+        return True
+
+    def readinto(self, buffer):
+        self._sock.settimeout(_left(self._expires))
+        return self._raw.readinto(buffer)
+
+    def close(self):
+        self._raw.close()
+        super().close()
+
+
+class _DeadlineSocket:
+    def __init__(self, sock, expires):
+        self._sock = sock
+        self._expires = expires
+
+    def sendall(self, data):
+        self._sock.settimeout(_left(self._expires))
+        self._sock.sendall(data)
+
+    def makefile(self, mode="rb", *args, **kwargs):
+        return io.BufferedReader(_DeadlineReader(self._sock, self._expires))
+
+    def __getattr__(self, name):
+        return getattr(self._sock, name)
+
+
+class _DeadlineHTTPConnection(http.client.HTTPConnection):
+
+    def connect(self):
+        expires = time.monotonic() + self.timeout
+        addresses = _dns.submit(
+            socket.getaddrinfo, self.host, self.port, 0, socket.SOCK_STREAM
+        ).result(timeout=_left(expires))
+        error = OSError("no address for vLLM host")
+
+        for family, kind, proto, _, address in addresses:
+            seconds = _left(expires)
+            sock = socket.socket(family, kind, proto)
+
+            try:
+                sock.settimeout(seconds)
+                sock.connect(address)
+            except OSError as exc:
+                sock.close()
+                error = exc
+                continue
+
+            self.sock = _DeadlineSocket(sock, expires)
+            return
+
+        raise error
+
+
+class _DeadlineHTTPHandler(urllib.request.HTTPHandler):
+
+    def http_open(self, req):
+        return self.do_open(_DeadlineHTTPConnection, req)
+
+
+_opener = urllib.request.build_opener(_DeadlineHTTPHandler)
+
+
+def _urlopen(request, timeout):
+    """urllib.request.urlopen, but `timeout` bounds the whole exchange."""
+
+    return _opener.open(request, timeout=timeout)
 
 
 class VLLMError(Exception):
@@ -190,7 +292,7 @@ def connectivity_test(request_id):
 
     try:
 
-        with urllib.request.urlopen(
+        with _urlopen(
             urllib.request.Request(url, method="GET"),
             timeout=DIAGNOSTIC_TIMEOUT_SECONDS
         ) as response:
@@ -312,7 +414,7 @@ def request_chat(payload, deadline=None, target=TARGET_EKS):
 
     try:
 
-        with urllib.request.urlopen(
+        with _urlopen(
             http_request,
             timeout=timeout
         ) as response:

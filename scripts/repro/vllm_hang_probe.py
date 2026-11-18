@@ -4,10 +4,10 @@ Does vllm.request_chat honour its timeout against a hung or slow server?
     python3 scripts/repro/vllm_hang_probe.py
 
 Local only. Two cases, each with a 3 s limit:
-  1. the server accepts the connection and never answers (what a dead NLB
-     target looks like): expected vllm_timeout after about 3 s;
-  2. the server trickles one byte per second: urllib's timeout is per socket
-     operation, not total, so this runs far past the limit (about 30 s).
+  1. the server accepts the connection and never answers (a hung server; a dead NLB
+     instead leaves connects unanswered, see gateway/tests/test_vllm_blackhole.py): about 3 s;
+  2. the server trickles one byte per second: plain urllib restarts its timeout
+     on every read (it ran about 30 s); vllm.py now bounds the total: about 3 s.
 Result recorded in docs/experiments/vllm-failure-recovery.md.
 """
 import os

@@ -107,13 +107,13 @@ def slow_mcp(monkeypatch, clock, seconds, error=None):
 @pytest.fixture
 def urlopen_timeouts(monkeypatch):
     seen = []
-    real = vllm.urllib.request.urlopen
+    real = vllm._urlopen
 
     def spy(request, timeout=None):
         seen.append(timeout)
         return real(request, timeout=timeout)
 
-    monkeypatch.setattr(vllm.urllib.request, "urlopen", spy)
+    monkeypatch.setattr(vllm, "_urlopen", spy)
 
     return seen
 
