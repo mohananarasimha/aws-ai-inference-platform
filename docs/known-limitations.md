@@ -13,13 +13,17 @@ The account quota for Running On-Demand G and VT instances is **4 vCPUs**; one `
 
 Request deadline propagation is implemented and unit tested (24 s budget under a 30 s Lambda timeout). A real inference-backend outage exposed at least one path that still reached Lambda's 30 s hard timeout: five invocations ended with `Duration: 30000 ms, Status: timeout`, and none logged a request or emitted a metric. A pod-failure run also shows three requests of about 31 s that may be the same thing (unverified).
 
-**Root cause is not known.** What is established:
+**Probable cause found and fixed in code; not yet validated live.**
 
-- The plain "vLLM never answers" path is bounded. `scripts/repro/vllm_hang_probe.py` and `scripts/repro/agent_hang_repro.py` show it ends at the vLLM call limit (about 20 s) with a controlled exception.
-- `urllib`'s timeout is per socket operation, so a server that trickles data can exceed it. A dead NLB target is not expected to do that.
-- The vLLM call is synchronous inside the async agent loop; unwinding after a failure (MCP session close, NAT-routed calls to AgentCore) is the unreproduced part.
+- `urllib`'s timeout is per socket operation. `socket.create_connection` gives every address a host name resolves to the full timeout, DNS (`getaddrinfo`) has no timeout, and every read restarts the clock.
+- The internal vLLM NLB is in five subnets, so its name resolves to up to five addresses. With no healthy target, connects to them went unanswered, and a vLLM call given `min(20 s, remaining)` tried address after address until Lambda killed the invocation at 30 s, before the handler could log or answer. The on-prem target is a single IP, which is why an on-prem failure ended correctly at the deadline.
+- The earlier local reproductions used one address and a server that accepted the connection, so they never hit this path.
+- Fix (commit "fix: enforce request deadline on vllm failure paths"): vLLM calls use an urllib handler whose timeout is the total for DNS, connecting across all addresses, sending and reading. `gateway/tests/test_vllm_blackhole.py` reproduces three unanswered addresses: the handler now returns `504 request_deadline_exceeded` within the budget instead of taking three full timeouts.
 
-Until it is found, the 24 s deadline must not be read as a guarantee. A first step would be stage-boundary log lines plus one controlled outage; a watchdog that returns a 504 shortly before the Lambda limit is a possible safety net (a design change, not started). The timeouts that reach 30 s emit no `TimeoutCount` metric.
+Still open:
+
+- **Live validation.** That an NLB with no healthy targets drops SYNs (rather than resetting) is inferred from the logs, not observed. A pod- or node-failure run should now show `504 request_deadline_exceeded` and no `Status: timeout`.
+- **Calls through boto3** (NLB discovery, Bedrock, RAG) still have per-attempt, per-address connect and per-read timeouts. Their configured timeouts fit the budget, but the time actually spent can exceed it. Nothing points to them in this outage.
 
 ## Observability
 
@@ -55,4 +59,4 @@ A fresh GPU node takes about 701 s to a Ready pod: the image (about 9.7 GB) take
 
 The project owner reports earlier self-hosted vLLM experiments on a separate on-prem GPU machine (RTX 4090 class): single-replica load behaviour, replicas behind a load balancer, and a tensor-parallel comparison. **None of the raw results, scripts, configuration or numbers were preserved in this repository**, and none were found elsewhere on the owner's laptop (local files, shell history and earlier assistant sessions were searched; they show only SSH access to a remote host, not results). So no on-prem figure, concurrency threshold or learning from those experiments is claimed anywhere in this repository, and no report was written from memory.
 
-To make them citable they would have to be rerun, keeping one report and one small results file: hardware and vLLM version/flags, the exact load command, a table of concurrency against throughput, p95 latency, running and waiting requests, KV-cache usage and preemptions, and the conclusions. Specific things worth confirming on the rerun rather than assuming: the effect of the default 64 MiB `/dev/shm` on tensor-parallel startup, and how GPU interconnect affects TP versus independent replicas.
+Reproducible tooling for a rerun now exists ([experiments/onprem-vllm-load-test.md](experiments/onprem-vllm-load-test.md)); the experiment has not been run. To make them citable they would have to be rerun, keeping one report and one small results file: hardware and vLLM version/flags, the exact load command, a table of concurrency against throughput, p95 latency, running and waiting requests, KV-cache usage and preemptions, and the conclusions. Specific things worth confirming on the rerun rather than assuming: the effect of the default 64 MiB `/dev/shm` on tensor-parallel startup, and how GPU interconnect affects TP versus independent replicas.

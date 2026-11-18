@@ -82,7 +82,9 @@ terraform/environments/dev/
 
 Each stack has its own versions.tf, providers.tf, variables.tf, locals.tf, outputs.tf, backend.tf (local state) and terraform.tfvars.example. Order: app, eks, eks-addons, kubectl manifests (app exports the Lambda security group; the Lambda finds the NLB hostname itself at runtime, so app runs once). Teardown: delete the Service, Deployment and NodePool, then eks-addons, eks, app (never app before eks-addons).
 
-**Migration status: done (2026-11-09). Files are moved, each stack passes `init`/`validate`/`plan`. The user is doing the first full creation run (app and eks applied; eks-addons and the vLLM Service followed).** `eks-addons` reads the Lambda security group from `../app/terraform.tfstate` (output `lambda_security_group_id`) and the cluster through `data "aws_eks_cluster"`, so it fails to plan until `app` and `eks` are applied: that is the ordering guard. Leftovers in the flat `dev/` (`.build`, `.terraform`, `asd.json`, `tf.plan`, `terraform.tfstate*`) are not part of any stack; ask before deleting.
+**Migration status: done (2026-11-09).** `eks-addons` reads the Lambda security group from `../app/terraform.tfstate` (output `lambda_security_group_id`) and the cluster through `data "aws_eks_cluster"`, so it fails to plan until `app` and `eks` are applied: that is the ordering guard. Leftovers in the flat `dev/` (`.build`, `.terraform`, `asd.json`, `tf.plan`, `terraform.tfstate*`) are untracked and not part of any stack; ask before deleting.
+
+Environment-specific values (account ID, VPC, subnet and ENI IDs) have no defaults: they live only in each stack's git-ignored `terraform.tfvars`. Tracked files (`variables.tf`, `terraform.tfvars.example`, manifests, docs) use placeholders. Never commit real IDs.
 
 Within each stack, split resources by concern (iam.tf, lambda.tf, eks.tf and so on).
 
@@ -106,35 +108,36 @@ Do not spend time building abstractions that do not directly help the current pl
 
 Current structure:
 
+```text
 enterprise-ai-platform/
 ├── README.md
 ├── CLAUDE.md
-├── data/
-│   └── *.md                  (RAG source documents, uploaded to S3 by Terraform)
+├── LICENSE
+├── .env.example              (optional local settings; the real .env is git-ignored)
+├── .github/workflows/        (CI: terraform fmt/validate, helm lint, pytest)
+├── data/                     (RAG source documents, uploaded to S3 by Terraform)
 ├── docs/
-│   ├── progress.md
+│   ├── architecture.md
+│   ├── known-limitations.md
+│   ├── vllm-cold-start.md
+│   ├── progress.md           (historical build log)
 │   ├── decisions/
-│   ├── learning/
-│   ├── terraform/
-│   └── troubleshooting/
+│   └── experiments/          (reports; raw captures in results/)
 ├── terraform/
 │   └── environments/
-│       └── dev/
+│       └── dev/              (app/, eks/, eks-addons/: see "Terraform layout")
 ├── gateway/
-│   ├── lambda/               (handler.py, agent.py, model.py, rag.py, mcp_client.py, approval.py, vllm.py)
+│   ├── lambda/               (handler.py, agent.py, model.py, rag.py, mcp_client.py, approval.py, vllm.py, deadline.py, metrics.py)
 │   └── tests/                (pytest; fake OpenAI-compatible server, no GPU or AWS needed)
 ├── write-executor/
-├── scripts/                  (approve.py)
-├── agent/
-│   └── agent.py
-├── mcp-server/
-│   └── server.py
-├── mcp-agentcore/
+├── mcp-agentcore/            (MCP tool server deployed to AgentCore by the app stack)
 │   ├── Dockerfile
 │   ├── requirements.txt
 │   └── server.py
-├── EnterpriseAIMCP/          (AgentCore project, managed with its own CDK)
-└── experiments/
+└── scripts/
+```
+
+The early prototypes (`agent/`, `mcp-server/`) and the unused AgentCore CLI scaffold (`EnterpriseAIMCP/`) were removed from the repository and its history before publication.
 
 Do not create large folder structures prematurely.
 
