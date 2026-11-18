@@ -95,6 +95,7 @@ gateway/tests/               Unit tests against fakes (no AWS, GPU or network ne
 mcp-agentcore/               MCP tool server deployed to AgentCore
 write-executor/              Lambda that runs an approved write action
 scripts/                     up.sh, down.sh, approve.py, measurement and load-test tooling, repro/ (local reproductions)
+ui/                          Optional Inference Playground: React + Vite page and a local token proxy (BFF)
 data/                        Documents ingested into the Knowledge Base
 docs/                        Architecture, known limitations, decisions/, experiments/ (reports and raw results)
 ```
@@ -152,9 +153,9 @@ curl -s -X POST "$(terraform output -raw invoke_url)" \
 
 Request fields: `prompt` (required), `provider` (`bedrock` or `vllm`), `target` (with `provider=vllm`: `eks`, the default, or `onprem`), `model_class` (`fast` or `quality`, Bedrock only), `rag` (`true` to retrieve first).
 
-## Provider selection
 A `200` response has `request_id`, `provider`, `model` (and `model_class` for Bedrock), `response`, `agent_status`, `agent_steps`, `latency_ms`, `input_tokens`, `output_tokens`, `tool_calls` (tool name, status and latency only), `rag_enabled`, and with RAG `retrieved_chunks`, `retrieval_latency_ms` and `rag_sources` (document file name and score). A proposed write returns `202` with `status: approval_required`, `action` and `approval_execution_arn`. Responses are not streamed.
 
+## Provider selection
 
 Selection is **explicit and per request**. The caller names the backend; configuration only says where each named backend lives.
 
@@ -195,6 +196,44 @@ flowchart LR
 - **Failure handling:** the same as the EKS target: one attempt, bounded by the request deadline, no fallback to EKS or Bedrock. An on-prem failure does not clear the cached EKS address.
 - **Tested:** routing, configuration errors and the no-fallback behaviour are covered by unit tests against local fake servers (`gateway/tests/test_vllm_target.py`). Live: one operator-reported on-prem request ended in a controlled `504 request_deadline_exceeded`. Read-only inspection then found that neither security group allowed the vLLM port, the most likely cause; the rules are now in Terraform, and no successful live on-prem request has been recorded since. The router's forwarding setup has not been inspected. Load-test tooling exists ([report template](docs/experiments/onprem-vllm-load-test.md)) but has not been run.
 - **Single points of failure:** one router instance, one tunnel, one on-prem host.
+
+## Inference Playground (optional UI)
+
+A small local web page for demonstrating and exercising the platform through its real API. It is not a chatbot: no history, no uploads, one request at a time. It lives in `ui/` and nothing else depends on it.
+
+```mermaid
+flowchart LR
+  Browser[Browser<br/>React page] -->|POST /api/invoke<br/>no credentials| BFF[Local BFF<br/>ui/server/bff.mjs, 127.0.0.1 only]
+  BFF -->|client credentials<br/>secret stays here| Cognito
+  BFF -->|POST /invoke, Bearer token| APIGW[API Gateway] --> Lambda[Gateway Lambda]
+```
+
+- **Authentication.** The Cognito client secret and access tokens stay in the BFF process, read from the git-ignored `ui/.env.local`. The browser only talks to `/api/invoke` on localhost. The BFF caches the token until a minute before it expires and drops it after a `401`.
+- **Local only.** The BFF has no user login, so it refuses to listen on anything but loopback, rejects other `Host` headers (DNS rebinding) and cross-site `Origin`s, and requires a JSON content type. Hosting it for other people would need real user authentication and TLS in front of it; that is not implemented.
+- **Same path as any client.** It forwards only `prompt`, `provider`, `target`, `model_class` and `rag` to the existing API Gateway endpoint. There is no second inference path, and the internal NLB is never exposed.
+- **Demo workflows:**
+  - **Inference:** Bedrock (`fast`/`quality`) or vLLM (`eks`/`onprem`), as selected.
+  - **RAG:** the generated answer and the retrieved evidence (chunk count, document names and scores from the Knowledge Base) are shown separately.
+  - **MCP tool:** a prompt the model may answer with a read-only tool. The page lists the tool calls the gateway reports.
+  - **Approval:** a write proposal returns `202`. The page shows the proposed action and execution ARN and says to use `scripts/approve.py`. It cannot approve, and it does not poll the execution.
+- **Metrics shown:** end-to-end latency measured in the browser, the gateway's own `latency_ms`, the backend, the status, tokens and agent steps, only when the response contains them. Time to first token is not available because the API does not stream.
+- **Errors:** each one names its source: the gateway (for example `request_deadline_exceeded` with component, step and budget, or `vllm_endpoint_not_found` when GPU capacity is off), API Gateway (`401`, `429`, and the `503` a Lambda hard timeout produces), the BFF (Cognito failure; a 29 s upstream limit) or the browser (35 s limit, network).
+
+**Run it locally** (Node 20.19+ or 22.12+):
+
+```bash
+cd ui
+npm ci
+cp .env.example .env.local      # fill in from: cd ../terraform/environments/dev/app && terraform output ...
+npm run bff                     # terminal 1: the token proxy on 127.0.0.1:8787
+npm run dev                     # terminal 2: http://127.0.0.1:5173
+# or a single process: npm run build && npm start   (serves the built page on :8787)
+npm test                        # simulated tests: fake Cognito and API Gateway, no AWS
+```
+
+**Validate against live infrastructure** (not done yet): with the `app` stack applied and `ui/.env.local` filled in, send the Inference demo with Bedrock (expect `200` with tokens). Then try the RAG demo (expect document names; this needs the gateway Lambda redeployed with the `tool_calls`/`rag_sources` fields), the MCP demo (expect a tool call listed when the model uses one) and the Approval demo (expect `202`, then approve or reject with `scripts/approve.py`). vLLM requests need the EKS GPU path (`scripts/up.sh`) or a reachable on-prem target; without them, expect `503 vllm_endpoint_not_found` or a controlled timeout.
+
+**Limitations:** local use only; one request at a time; no streaming or TTFT; no approval-status polling (that would need AWS credentials in the BFF); whether the model calls a tool is the model's choice; validated only with simulated tests. The UI's build tooling (`vite`, `vitest`) pulls in a `picomatch` version with a published ReDoS advisory and no fixed release yet. It affects only build-time glob matching on this repo's own config, and nothing from it ships to the browser or the BFF.
 
 ## Configuration
 
@@ -281,6 +320,7 @@ flowchart LR
 | CloudWatch dashboard (vLLM/GPU/cluster widgets) | Implemented, not validated | PromQL drafts not checked against live series |
 | GPU load test (concurrency, TTFT, TPOT, throughput, p95, KV cache) | Postponed | On-prem tooling ready and unit tested; never run; no results |
 | `1 -> 2` GPU autoscaling, readiness-failure test | Postponed | GPU quota; test designed, not run |
+| Inference Playground UI (`ui/`) | Implemented, not validated live | Tests against a fake Cognito and a fake API Gateway only |
 | KServe, alarms, tracing, CI deploys, remote state | Not implemented | |
 
 ## Tests and CI
@@ -292,7 +332,7 @@ python3.12 -m venv .venv
 .venv/bin/python -m pytest scripts/tests -q             # measurement and load-test tooling
 ```
 
-GitHub Actions ([.github/workflows/ci.yml](.github/workflows/ci.yml)) runs `terraform fmt -check` and `validate` for each stack, `helm lint`, both test suites and a shell syntax check. It uses no AWS credentials and deploys nothing.
+GitHub Actions ([.github/workflows/ci.yml](.github/workflows/ci.yml)) runs `terraform fmt -check` and `validate` for each stack, `helm lint`, both Python test suites, a shell syntax check, and the UI's tests and build. It uses no AWS credentials and deploys nothing.
 
 ## Known limitations
 
