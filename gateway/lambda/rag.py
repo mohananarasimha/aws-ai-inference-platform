@@ -52,19 +52,37 @@ def retrieve(prompt, deadline=None):
         raise ComponentTimeout("rag") from exc
 
 
+def source_of(result):
+    """
+    Where a retrieved chunk came from, as returned by the Knowledge Base:
+    the document's file name (never the bucket) and the relevance score.
+    None for anything the Retrieve response did not include.
+    """
+
+    uri = ((result.get("location") or {}).get("s3Location") or {}).get("uri")
+    score = result.get("score")
+
+    return {
+        "document": uri.rsplit("/", 1)[-1] if uri else None,
+        "score": round(score, 4) if isinstance(score, (int, float)) else None
+    }
+
+
 def build_rag_context(prompt, retrieval, retrieval_start):
     """
     Turn a Retrieve response into the augmented model prompt
     and the RAG metrics.
     """
 
-    chunks = [
-        result["content"]["text"]
+    used = [
+        result
         for result in retrieval[
             "retrievalResults"
         ]
         if result["content"].get("text")
     ]
+
+    chunks = [result["content"]["text"] for result in used]
 
     model_prompt = RAG_PROMPT.format(
         context="\n\n".join(chunks),
@@ -74,6 +92,7 @@ def build_rag_context(prompt, retrieval, retrieval_start):
     rag_metrics = {
         "rag_enabled": True,
         "retrieved_chunks": len(chunks),
+        "rag_sources": [source_of(result) for result in used],
         "retrieval_latency_ms": int(
             (
                 time.time()

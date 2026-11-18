@@ -153,6 +153,8 @@ curl -s -X POST "$(terraform output -raw invoke_url)" \
 Request fields: `prompt` (required), `provider` (`bedrock` or `vllm`), `target` (with `provider=vllm`: `eks`, the default, or `onprem`), `model_class` (`fast` or `quality`, Bedrock only), `rag` (`true` to retrieve first).
 
 ## Provider selection
+A `200` response has `request_id`, `provider`, `model` (and `model_class` for Bedrock), `response`, `agent_status`, `agent_steps`, `latency_ms`, `input_tokens`, `output_tokens`, `tool_calls` (tool name, status and latency only), `rag_enabled`, and with RAG `retrieved_chunks`, `retrieval_latency_ms` and `rag_sources` (document file name and score). A proposed write returns `202` with `status: approval_required`, `action` and `approval_execution_arn`. Responses are not streamed.
+
 
 Selection is **explicit and per request**. The caller names the backend; configuration only says where each named backend lives.
 

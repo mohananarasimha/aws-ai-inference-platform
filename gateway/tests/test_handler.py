@@ -456,3 +456,52 @@ def test_vllm_connectivity_diagnostic_reports_missing_endpoint(fake_mcp):
 
     assert status == 503
     assert body["error"] == "vllm_endpoint_not_found"
+
+
+# ---- fields the playground UI reads -------------------------------------------
+
+def test_rag_sources_name_the_document_and_score_only(monkeypatch, fake_mcp):
+    monkeypatch.setattr(handler, "retrieve", lambda prompt, deadline=None: {"retrievalResults": [
+        {"content": {"text": "Rollbacks need approval."},
+         "location": {"type": "S3", "s3Location": {"uri": "s3://private-bucket/docs/deployment-policy.md"}},
+         "score": 0.734512},
+        {"content": {"text": "No location in this one."}},
+        {"content": {}},
+    ]})
+    patch_bedrock(monkeypatch, FakeBedrock([converse_text("The on-call lead.")]))
+
+    status, body = invoke({"prompt": "Who approves rollbacks?", "rag": True})
+
+    assert status == 200
+    assert body["retrieved_chunks"] == 2
+    assert body["rag_sources"] == [
+        {"document": "deployment-policy.md", "score": 0.7345},
+        {"document": None, "score": None},
+    ]
+    assert "private-bucket" not in json.dumps(body)
+
+
+def test_tool_calls_report_name_status_and_latency_but_no_data(monkeypatch):
+    FakeMcp(results={"get_lambda_configuration": {"MemorySize": 256}}).install(monkeypatch)
+    patch_bedrock(monkeypatch, FakeBedrock([
+        converse_tool("t1", "get_lambda_configuration", {"function_name": "secret-fn"}),
+        converse_text("256 MB."),
+    ]))
+
+    status, body = invoke({"prompt": "memory of secret-fn?"})
+
+    assert status == 200
+    assert [(c["tool"], c["status"]) for c in body["tool_calls"]] == [("get_lambda_configuration", "success")]
+    assert isinstance(body["tool_calls"][0]["latency_ms"], int)
+    assert "MemorySize" not in json.dumps(body["tool_calls"])
+    assert "secret-fn" not in json.dumps(body["tool_calls"])
+
+
+def test_plain_request_reports_no_tool_calls_and_no_rag_fields(monkeypatch, fake_mcp):
+    patch_bedrock(monkeypatch, FakeBedrock([converse_text("hi")]))
+
+    status, body = invoke({"prompt": "hello"})
+
+    assert status == 200
+    assert body["tool_calls"] == []
+    assert body["rag_enabled"] is False and "rag_sources" not in body

@@ -458,6 +458,10 @@ def _handle(event, context, outcome):
                 "output_tokens": agent_result[
                     "output_tokens"
                 ],
+                # Tool name, status and latency only: no arguments or results.
+                "tool_calls": agent_result[
+                    "tool_calls"
+                ],
                 **rag_metrics
             }
         )
