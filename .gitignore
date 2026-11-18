@@ -48,3 +48,24 @@ exp3-node.txt
 /onprem-load-results/
 /onprem-load-timeseries.csv
 /onprem-load-timeseries.metric-names.txt
+
+# Claude Code personal overrides (shared rules live in .claude/settings.json)
+.claude/settings.local.json
+
+# Retired flat Terraform root: only stack directories under dev/ are tracked
+terraform/environments/dev/.terraform.lock.hcl
+
+# Model weights and caches, never committed
+*.safetensors
+*.gguf
+*.pt
+*.pth
+*.onnx
+.huggingface/
+hf-cache/
+huggingface/
+
+# Build and test artifacts
+*.zip
+.coverage
+htmlcov/
