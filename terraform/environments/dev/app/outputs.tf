@@ -23,8 +23,8 @@ output "cognito_token_endpoint" {
   value       = "https://${aws_cognito_user_pool_domain.gateway.domain}.auth.${var.aws_region}.amazoncognito.com/oauth2/token"
 }
 
-output "congito_OpenID_Connect_configuration_URL" {
-  description = ""
+output "cognito_openid_configuration_url" {
+  description = "OpenID Connect discovery document of the Cognito user pool (issuer and JWKS used by the API authorizer)"
   value       = "https://cognito-idp.us-east-1.amazonaws.com/${aws_cognito_user_pool.gateway.id}/.well-known/openid-configuration"
 }
 
